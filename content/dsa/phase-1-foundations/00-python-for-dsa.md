@@ -1,0 +1,1113 @@
+# Module 00: Python for DSA (for a TypeScript Dev)
+
+**Time:** ~1 week (4–5 hrs)
+**Prerequisites:** none. You already know how to program; this is just a new syntax plus a new cost model.
+**You'll need:** Python 3.12+ (`python3 --version`), VS Code with the Python extension (Pylance), and pytest (`pip install pytest` inside a venv)
+
+---
+
+## 1. Why it matters (the backend analogy)
+
+You wouldn't use a new ORM in production without knowing which method calls hit the database. `user.orders` looks like a property access, but it might be a `SELECT`. Python's built-ins are exactly like that: **innocent-looking one-liners that hide loops.**
+
+| TypeScript (what you know) | Python (what you'll learn) |
+|---|---|
+| `arr.includes(x)`: you know it scans | `x in arr`: also scans, O(n). But `x in some_set` is O(1). Same syntax, very different cost |
+| `arr.shift()`: O(n), and you've probably never thought about it | `arr.pop(0)`: O(n). Use `collections.deque` for queues |
+| `Map<string, number>` | `dict`, plus `defaultdict` and `Counter` for counting and grouping without boilerplate |
+| No built-in heap. You'd `npm install` one | `heapq` in the standard library. This is a big reason Python is the most popular interview language |
+| `arr.sort()` sorts **as strings** by default | `sorted()` sorts numbers numerically and is stable, with an easy `key=` |
+| Numbers are 64-bit floats, so integers are only exact up to 2^53 | `int` has arbitrary precision. Overflow doesn't exist |
+| Stack depth of ~10,000+ frames in Node | Recursion limit of **1000 frames** by default. Deep recursion crashes |
+
+Why Python for interviews: it's the shortest path from idea to working code. A 25-line TypeScript solution is often 12 lines of Python. In a 45-minute interview, every line you don't have to write is time spent thinking instead.
+
+The goal of this module isn't to make you a Python expert. It's to make you **fluent in the 10% of Python that DSA uses**, and to make you know what each operation costs.
+
+---
+
+## 2. Concepts
+
+### 2.1 Setup
+
+```bash
+mkdir -p ~/code/dsa-journey && cd ~/code/dsa-journey
+git init
+python3 -m venv .venv && source .venv/bin/activate
+pip install pytest
+mkdir -p dsalib tests drills/00 problems
+```
+
+Three ways to run code. Use all three:
+
+```bash
+python3                    # REPL: test a one-liner quickly
+python3 drills/00/d1.py    # run a file
+python3 -i drills/00/d1.py # run a file, then drop into a REPL with its variables loaded (very useful)
+pytest -q                  # run the tests in tests/
+```
+
+### 2.2 Syntax map: TypeScript → Python
+
+| TypeScript | Python | Notes |
+|---|---|---|
+| `const x = 5; let y = 6;` | `x = 5` | No declarations. Constants are a naming convention (`MAX_N = 10**5`) |
+| `{ ... }` blocks | indentation (4 spaces) | The indentation *is* the syntax |
+| `&&`, `\|\|`, `!` | `and`, `or`, `not` | |
+| `===`, `!==` | `==`, `!=` | `==` compares values (deep for lists and dicts). `is` compares identity; only use it for `None` |
+| `null`, `undefined` | `None` | Only one "nothing" |
+| `true`, `false` | `True`, `False` | Capitalized |
+| `x ?? y` | `x if x is not None else y` | `x or y` also works, but it treats `0` and `""` as missing too |
+| `cond ? a : b` | `a if cond else b` | |
+| `i++` | `i += 1` | There's no `++` |
+| `for (let i = 0; i < n; i++)` | `for i in range(n):` | |
+| `for (const x of arr)` | `for x in arr:` | |
+| `arr.forEach((x, i) => ...)` | `for i, x in enumerate(arr):` | |
+| `arr.length` | `len(arr)` | O(1) for every built-in container |
+| `` `Hello ${name}` `` | `f"Hello {name}"` | f-strings |
+| `function f(a: number): number {}` | `def f(a: int) -> int:` | Type hints are optional and not enforced at runtime |
+| `(a, b) => a + b` | `lambda a, b: a + b` | Lambdas must be a single expression |
+| `const [a, b] = [1, 2]` | `a, b = 1, 2` | Tuple unpacking. Swap with `a, b = b, a` |
+| `const {x, y} = point` | no direct equivalent | Use `x, y = point` with tuples, or attributes |
+| `...arr` (spread) | `*arr` | `[*a, *b]`, `f(*args)`, `{**d1, **d2}` |
+| `Math.floor(a / b)` | `a // b` | Floor division, but see 2.3 for negatives |
+| `Math.max(...arr)` | `max(arr)` | Raises an error on an empty list. Use `max(arr, default=0)` |
+| `Number.MAX_SAFE_INTEGER` / `Infinity` | `float('inf')` or `math.inf` | Used as "infinity" in min-searches |
+| `throw new Error()` | `raise ValueError()` | |
+| `try {} catch (e) {}` | `try: ... except ValueError as e: ...` | |
+
+```python
+# Python: the whole file is a script; this guard lets it be both a script and an importable module
+def main() -> None:
+    print("hello")
+
+if __name__ == "__main__":
+    main()
+```
+
+### 2.3 Numbers: the differences that bite
+
+```python
+7 / 2      # 3.5   (/ is ALWAYS float division)
+7 // 2     # 3     (floor division)
+-7 // 2    # -4    floors toward -infinity. JS: Math.trunc(-7/2) = -3
+-7 % 2     # 1     the sign follows the divisor. JS: -7 % 2 = -1
+int(-7 / 2)  # -3  truncates toward zero, like JS. Use this when you need truncation
+
+2 ** 100   # 1267650600228229401496703205376: exact, no overflow, ever
+10**9 + 7  # a common "mod" constant in problems
+
+round(2.5), round(3.5)   # (2, 4): banker's rounding (round half to even). Surprise!
+
+float('inf') > 10**100   # True. Use it as the initial value for min-searches
+divmod(17, 5)            # (3, 2)
+abs(-3), min(3, 1, 2), max(3, 1, 2)
+import math; math.isqrt(17), math.gcd(12, 18)   # (4, 6): integer square root, gcd
+```
+
+**Why arbitrary precision matters for DSA:** problems that say "return the answer modulo 10^9+7" exist because answers overflow 64-bit integers in other languages. In Python they won't overflow, but you still need to apply the modulo, because the problem expects it and huge integers are slower.
+
+### 2.4 Truthiness, None, and comparisons
+
+Falsy values: `False`, `None`, `0`, `0.0`, `""`, `[]`, `{}`, `set()`, `()`. **Everything else is truthy**, including `[0]` and `"0"`.
+
+```python
+if not nums:          # idiomatic "is empty". Like `nums.length === 0`
+    return []
+
+if node is None:      # use `is` for None. Never `== None`
+    ...
+
+1 < x < 10            # chained comparisons work: means (1 < x) and (x < 10)
+
+# Sequences compare lexicographically, element by element. This is extremely useful for sorting and heaps
+(1, 2) < (1, 3)       # True
+[1, 2] < [1, 2, 0]    # True: a prefix is smaller
+"Zebra" < "apple"     # True: uppercase letters sort before lowercase (by code point)
+```
+
+### 2.5 Lists: Python's dynamic array
+
+A `list` is a dynamic array (like a JS array, or a Go slice): a contiguous block of pointers that grows automatically.
+
+```python
+nums = [5, 3, 8]
+nums[0]          # 5
+nums[-1]         # 8: negative indices count from the end
+nums.append(1)   # push
+nums.pop()       # pop from the end, returns 1
+nums.pop(0)      # remove from the FRONT: O(n), shifts everything left (like JS shift)
+nums.insert(0, 9)# O(n): shifts everything right
+nums.extend([4, 4])  # like push(...arr)
+nums.remove(4)   # removes the first 4: O(n) search + O(n) shift
+nums.index(8)    # position of the first 8: O(n). Raises ValueError if missing
+nums.count(4)    # O(n)
+nums.reverse()   # in place, O(n)
+8 in nums        # O(n) linear scan!
+
+zeros = [0] * 5               # [0, 0, 0, 0, 0]
+matrix = [[0] * 3 for _ in range(4)]  # a 4x3 grid, correctly
+```
+
+**The grid trap** (you will hit this):
+
+```python
+grid = [[0] * 3] * 3   # WRONG: three references to the SAME inner list
+grid[0][0] = 1
+print(grid)            # [[1, 0, 0], [1, 0, 0], [1, 0, 0]]
+
+grid = [[0] * 3 for _ in range(3)]   # RIGHT: three separate lists
+```
+
+`[0] * 3` is safe because ints are immutable. `[[0] * 3] * 3` copies the *reference* to one list three times. It's the same bug as `Array(3).fill([])` in JS.
+
+#### Slicing: powerful, and always a copy
+
+```python
+a = [0, 1, 2, 3, 4, 5]
+a[1:4]     # [1, 2, 3]   start inclusive, end exclusive (like JS slice)
+a[:3]      # [0, 1, 2]
+a[3:]      # [3, 4, 5]
+a[-2:]     # [4, 5]      the last two
+a[::2]     # [0, 2, 4]   step 2
+a[::-1]    # [5, 4, 3, 2, 1, 0]   reversed copy
+a[:]       # a shallow copy of the whole list
+
+a[1:3] = [9, 9, 9]   # slice assignment: replaces 2 elements with 3 → [0, 9, 9, 9, 3, 4, 5]
+```
+
+**Every slice creates a new list and costs O(k)** for k elements. `a[1:]` isn't a free "view". It copies n−1 elements. Inside a loop or recursion, this is a classic hidden O(n) (Module 01 covers it in depth).
+
+#### Copies and aliasing
+
+```python
+a = [1, 2, 3]
+b = a          # same list (an alias), like JS
+c = a[:]       # a shallow copy (also: list(a), a.copy())
+a.append(4)
+b              # [1, 2, 3, 4]
+c              # [1, 2, 3]
+
+import copy
+deep = copy.deepcopy(grid)   # for nested lists. Rarely needed in DSA
+```
+
+In backtracking (Module 14) you'll append `path[:]` (a copy) to your results, not `path`. Otherwise every result points to the same list, which ends up empty.
+
+### 2.6 Comprehensions
+
+Comprehensions replace most `map`/`filter` chains. They're idiomatic, readable, and slightly faster than loops.
+
+```python
+squares = [x * x for x in range(5)]                 # [0, 1, 4, 9, 16]
+evens   = [x for x in nums if x % 2 == 0]           # filter
+pairs   = [(i, j) for i in range(3) for j in range(i)]   # nested loops: outer loop first
+index   = {name: i for i, name in enumerate(names)} # dict comprehension
+uniq    = {x % 3 for x in range(10)}                # set comprehension → {0, 1, 2}
+total   = sum(x * x for x in nums)                  # generator expression: no list built, O(1) extra memory
+```
+
+| TypeScript | Python |
+|---|---|
+| `arr.map(x => x * 2)` | `[x * 2 for x in arr]` |
+| `arr.filter(x => x > 0)` | `[x for x in arr if x > 0]` |
+| `arr.reduce((a, b) => a + b, 0)` | `sum(arr)` |
+| `arr.some(x => x < 0)` | `any(x < 0 for x in arr)` |
+| `arr.every(x => x > 0)` | `all(x > 0 for x in arr)` |
+| `Object.fromEntries(arr.map(...))` | `{k: v for k, v in ...}` |
+| `arr.flat()` | `[x for row in grid for x in row]` |
+
+Rule: if a comprehension doesn't fit on one or two lines, write a normal loop.
+
+### 2.7 Strings
+
+Strings are **immutable** sequences of characters. There's no separate `char` type; a character is just a string of length 1.
+
+```python
+s = "hello"
+s[0], s[-1], s[1:4]     # 'h', 'o', 'ell'
+s[::-1]                 # 'olleh'
+s[0] = "j"              # TypeError: strings are immutable
+len(s)                  # O(1)
+
+"ell" in s              # substring search
+s.split(","), " a  b ".split()   # split on a separator, or on any whitespace
+",".join(["a", "b"])    # 'a,b': join is a method on the SEPARATOR (backwards from JS)
+s.upper(), s.lower(), s.strip(), s.startswith("he"), s.find("l")  # find returns -1 if missing
+s.isalnum(), s.isalpha(), s.isdigit()
+
+ord("a"), chr(98)       # 97, 'b'
+ord(c) - ord("a")       # map 'a'..'z' to 0..25. Used constantly for 26-slot count arrays
+
+list(s)                 # ['h', 'e', 'l', 'l', 'o']: when you need to mutate
+```
+
+**Building strings:** since strings are immutable, `s = s + c` creates a new string every time. Build a list of parts and join it once:
+
+```python
+parts = []
+for word in words:
+    parts.append(word.upper())
+result = "".join(parts)       # O(total length), once
+```
+
+(CPython often optimizes `s += c` in a loop so it isn't quadratic, but that's an implementation detail. Prepending, `s = c + s`, is always quadratic. Module 01 has the details. Use `join` and you never have to think about it.)
+
+### 2.8 Tuples: immutable, hashable records
+
+```python
+point = (3, 4)
+x, y = point             # unpacking
+single = (5,)            # a one-element tuple needs the trailing comma
+def min_max(nums): return min(nums), max(nums)   # returns a tuple
+lo, hi = min_max([3, 1, 2])
+
+for i, (x, y) in enumerate(points): ...   # nested unpacking
+```
+
+**Why tuples matter for DSA:** they're **hashable**, so they can be dict keys and set members. Lists can't.
+
+```python
+visited = set()
+visited.add((row, col))          # grid coordinates as a set member: used in every grid BFS
+memo = {}
+memo[(i, j)] = 42                # a 2D memo key for DP
+
+hash([1, 2])                     # TypeError: unhashable type: 'list'
+key = tuple(sorted(word))        # e.g., the Group Anagrams key: a sorted letters tuple
+```
+
+TS comparison: in a JS `Map`, the key `[1, 2]` is compared *by reference*, so `map.get([1, 2])` is always `undefined`. You'd have to stringify it (`"1,2"`). Python tuples are compared *by value*, so this just works.
+
+### 2.9 Dicts: hash maps
+
+`dict` is a hash map. Since Python 3.7, it keeps **insertion order** (like a JS `Map`).
+
+```python
+ages = {"ana": 31, "bo": 25}
+ages["cy"] = 40                  # insert/update: O(1) average
+ages["ana"]                      # 31. Raises KeyError if missing
+ages.get("zed")                  # None (no error)
+ages.get("zed", 0)               # 0: a default
+"bo" in ages                     # O(1) average: checks KEYS
+del ages["bo"]                   # O(1) average
+ages.pop("cy", None)             # remove and return; no error if missing with a default
+
+for name in ages: ...            # iterates over keys
+for name, age in ages.items(): ...   # keys and values (like Object.entries / map.entries())
+list(ages.keys()), list(ages.values())
+
+counts = {}
+for c in "banana":
+    counts[c] = counts.get(c, 0) + 1    # the manual counting pattern → {'b': 1, 'a': 3, 'n': 2}
+
+groups = {}
+groups.setdefault("fruit", []).append("apple")   # get-or-insert in one step
+```
+
+Keys must be hashable: `int`, `str`, `tuple` (of hashables), `frozenset`. Not `list`, `dict`, or `set`.
+
+### 2.10 Sets
+
+```python
+seen = set()           # NOT {}: that's an empty dict
+seen.add(3)            # O(1) average
+3 in seen              # O(1) average: THE reason sets exist
+seen.discard(3)        # remove, no error if missing (remove() raises KeyError)
+s = set(nums)          # dedupe: O(n)
+
+a, b = {1, 2, 3}, {2, 3, 4}
+a | b, a & b, a - b, a ^ b   # union, intersection, difference, symmetric difference
+```
+
+### 2.11 Loops and the built-ins you'll use daily
+
+```python
+range(5)              # 0..4
+range(2, 10, 3)       # 2, 5, 8
+range(10, 0, -1)      # 10 down to 1. The end is exclusive in both directions
+
+for i, x in enumerate(nums): ...          # index and value
+for a, b in zip(xs, ys): ...              # pairwise; stops at the shorter one
+for x in reversed(nums): ...              # reverse iteration, no copy
+for i in range(len(nums) - 1, -1, -1): ...  # reverse by index
+
+for prev, cur in zip(nums, nums[1:]): ... # adjacent pairs (note: nums[1:] is a copy)
+
+sum(nums), min(nums), max(nums)
+max(words, key=len)                       # the longest word
+min(points, key=lambda p: p[0]**2 + p[1]**2)   # the closest point to the origin
+max([], default=0)                        # avoid an error on empty input
+
+# for...else: the else runs if the loop wasn't broken out of. Occasionally handy for search loops
+for x in nums:
+    if x == target:
+        break
+else:
+    print("not found")
+```
+
+### 2.12 Sorting
+
+```python
+nums.sort()                     # in place, returns None (like arr.sort(), but it RETURNS None)
+new = sorted(nums)              # returns a new list; works on any iterable (strings, sets, dict keys)
+sorted(nums, reverse=True)      # descending
+sorted(words, key=len)          # by length
+sorted(words, key=str.lower)    # case-insensitive
+
+# Multi-key sorting: return a tuple from the key function.
+# "Sort by frequency descending, then alphabetically": negate the numeric key
+sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+intervals.sort(key=lambda iv: iv[0])   # sort intervals by start: Module 20 in one line
+```
+
+Facts you need:
+- **Sorting is O(n log n)** (Timsort). On already-sorted or nearly sorted data it's close to O(n).
+- **It's stable**: equal elements keep their original relative order. That lets you sort by a secondary key first, then by the primary key.
+- **Numbers sort numerically.** JS sorts `[10, 9, 1]` into `[1, 10, 9]` by default because it compares strings. Python gives `[1, 9, 10]`.
+- **`x = nums.sort()` sets `x` to `None`.** It's a common bug.
+- You rarely need a custom comparator. If you do (e.g., LeetCode 179, Largest Number), use `functools.cmp_to_key(lambda a, b: ...)`, which returns a negative number, zero, or a positive number like a JS comparator.
+
+### 2.13 `collections`: deque, defaultdict, Counter
+
+```python
+from collections import deque, defaultdict, Counter
+```
+
+#### `deque`: double-ended queue (use it for every queue)
+
+```python
+q = deque([1, 2, 3])
+q.append(4)        # O(1) add on the right
+q.appendleft(0)    # O(1) add on the left
+q.pop()            # O(1) remove from the right
+q.popleft()        # O(1) remove from the left. Use this instead of list.pop(0)
+q[0], q[-1]        # peek at either end: O(1)
+q[len(q) // 2]     # indexing the MIDDLE is O(n). A deque isn't an array
+deque(maxlen=3)    # a bounded deque: appending to a full one drops from the other end (a ring buffer)
+
+# The BFS skeleton you'll write a hundred times
+q = deque([start])
+while q:
+    node = q.popleft()
+    for nxt in neighbors(node):
+        q.append(nxt)
+```
+
+Backend analogy: `deque` is an in-memory job queue, like a Redis list with `LPUSH`/`RPOP`. A `list` used as a queue (`pop(0)`) is like a queue table where every dequeue rewrites all the rows.
+
+#### `defaultdict`: a dict with a factory for missing keys
+
+```python
+graph = defaultdict(list)
+for a, b in edges:
+    graph[a].append(b)     # no "if a not in graph" check
+    graph[b].append(a)
+
+counts = defaultdict(int)  # int() returns 0
+for w in words:
+    counts[w] += 1
+```
+
+**Gotcha:** just *reading* a missing key inserts it. `if counts["x"] == 0:` adds `"x"` to the dict. Use `"x" in counts` or `counts.get("x")` when you only want to check.
+
+#### `Counter`: a multiset / frequency map
+
+```python
+c = Counter("banana")         # Counter({'a': 3, 'n': 2, 'b': 1})
+c["a"]                        # 3
+c["z"]                        # 0: missing keys return 0 and are NOT inserted
+c.most_common(2)              # [('a', 3), ('n', 2)]
+Counter("listen") == Counter("silent")   # True: an anagram check in one line
+c.update("aa")                # add counts
+c - Counter("ab")             # subtraction drops zero and negative counts
+c.total()                     # the sum of all counts (3.10+)
+```
+
+`OrderedDict` also exists. It has `move_to_end()` and `popitem(last=False)`, which you'll meet with LRU caches in Module 25. Since plain dicts keep order now, you won't need it until then.
+
+### 2.14 `heapq`: priority queues
+
+Python's heap is a **min-heap stored in a plain list**, and `heapq` provides functions that operate on that list.
+
+```python
+import heapq
+
+h = []
+heapq.heappush(h, 5)     # O(log n)
+heapq.heappush(h, 1)
+heapq.heappush(h, 3)
+h[0]                     # 1: peek at the min, O(1)
+heapq.heappop(h)         # 1: pop the min, O(log n)
+
+nums = [5, 1, 8, 3]
+heapq.heapify(nums)      # turn a list into a heap in place: O(n), not O(n log n) (Module 13 proves this)
+
+heapq.nlargest(3, nums)  # top 3: O(n log k)
+heapq.nsmallest(3, points, key=lambda p: p[0]**2 + p[1]**2)
+```
+
+**Max-heap:** there isn't one (until a Python 3.14 addition you shouldn't rely on in interviews). Push negated values instead:
+
+```python
+h = []
+for x in [5, 1, 8]:
+    heapq.heappush(h, -x)
+-heapq.heappop(h)        # 8
+```
+
+**Priorities with payloads:** push tuples. They compare by the first element, then the second, and so on.
+
+```python
+heapq.heappush(tasks, (priority, task_name))
+
+# Trap: if two priorities tie, Python compares the SECOND element.
+# If that's an object without '<' (like a ListNode), you get:
+# TypeError: '<' not supported between instances of 'ListNode' and 'ListNode'
+# Fix: add a unique tiebreaker counter
+heapq.heappush(h, (node.val, i, node))
+```
+
+Backend analogy: this is a priority job scheduler. Think BullMQ's job priorities, or a delayed-job queue ordered by `run_at`. `heappop` always gives you the most urgent job.
+
+### 2.15 `bisect`: binary search on sorted lists
+
+```python
+import bisect
+
+a = [1, 2, 2, 2, 3]
+bisect.bisect_left(a, 2)    # 1: the first index where 2 could be inserted (the leftmost 2)
+bisect.bisect_right(a, 2)   # 4: the index after the last 2
+bisect.bisect_left(a, 2.5)  # 4
+# How many 2s? bisect_right - bisect_left = 3
+# How many elements < x? bisect_left(a, x)
+
+bisect.insort(a, 2)         # insert while keeping the list sorted: O(log n) search, but O(n) insert (shifting)
+bisect.bisect_left(records, 10, key=lambda r: r[0])   # key= is supported on 3.10+
+```
+
+Backend analogy: `bisect_left` on a sorted list is what a database does with a B-tree index on `WHERE ts >= ?`. It's a seek in O(log n), not a scan. You'll write your own binary search in Module 10. Until then, `bisect` is the tool.
+
+### 2.16 Functions, closures, and decorators you'll use
+
+```python
+def outer():
+    count = 0
+    def inc():
+        nonlocal count        # needed to REASSIGN an outer variable (mutating a list doesn't need it)
+        count += 1
+    inc(); inc()
+    return count              # 2
+
+# Mutable default argument trap: the default is created ONCE, at definition time
+def add(x, acc=[]):           # BUG: every call shares the same list
+    acc.append(x)
+    return acc
+
+def add(x, acc=None):         # FIX
+    if acc is None:
+        acc = []
+    acc.append(x)
+    return acc
+```
+
+**Memoization in one line**, which you'll lean on for DP in Module 17:
+
+```python
+from functools import cache   # (lru_cache(maxsize=None) on older Pythons)
+
+@cache
+def fib(n: int) -> int:
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+fib(200)   # instant. Without @cache it would take longer than the age of the universe
+```
+
+`@cache` is literally a dict from arguments to results, like a read-through cache in front of an expensive service call. The arguments must be hashable, so pass tuples, not lists.
+
+The pattern you'll use most on LeetCode: a nested helper that closes over the inputs.
+
+```python
+class Solution:
+    def numIslands(self, grid: list[list[str]]) -> int:
+        rows, cols = len(grid), len(grid[0])
+
+        def dfs(r: int, c: int) -> None:   # sees grid, rows, and cols from the enclosing scope
+            ...
+
+        ...
+```
+
+### 2.17 The recursion limit
+
+```python
+import sys
+sys.getrecursionlimit()      # 1000 by default
+
+def depth(n):
+    return 0 if n == 0 else 1 + depth(n - 1)
+
+depth(990)     # fine
+depth(1000)    # RecursionError: maximum recursion depth exceeded
+```
+
+What this means for you:
+- **Recursion depth = the height of the call stack.** Recursive DFS on a linked list of 10^5 nodes, or on a 300×300 grid that's all land (90,000 cells in one path), *will* crash.
+- `sys.setrecursionlimit(10**6)` raises Python's limit, but the real C stack under it can still overflow and **segfault** the process. That's a crash with no traceback. It sometimes works on LeetCode, but it isn't something to rely on.
+- **The fix is to rewrite deep recursion iteratively**, with an explicit stack (DFS) or a queue (BFS). You'll practice this in Modules 07, 12, and 15.
+- For balanced trees (depth about log n) and backtracking (depth ≤ about 20), recursion is fine.
+
+Node comparison: V8's default stack allows roughly 10,000 frames, so you probably never hit this limit in TypeScript. In Python you will.
+
+### 2.18 Classes for nodes
+
+LeetCode defines these for you, but write them yourself once:
+
+```python
+class ListNode:
+    def __init__(self, val: int = 0, next: "ListNode | None" = None):
+        self.val = val
+        self.next = next
+
+class TreeNode:
+    def __init__(self, val: int = 0, left: "TreeNode | None" = None, right: "TreeNode | None" = None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+    def __repr__(self) -> str:          # what print() shows: helps a lot when debugging
+        return f"TreeNode({self.val})"
+```
+
+`self` is the explicit `this`. `__init__` is the constructor. `__repr__` is `toString`.
+
+For plain records, `dataclass` saves boilerplate. With `order=True`, instances compare field by field, so they work in heaps:
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass(order=True)
+class Job:
+    priority: int
+    name: str = field(compare=False)    # exclude from comparisons
+
+heapq.heappush(h, Job(2, "send-email"))
+```
+
+**LeetCode's format:** you fill in a method on `class Solution`. Ignore the `self`. It's just how LeetCode wraps things.
+
+### 2.19 Type hints
+
+Hints don't change runtime behavior, but they help Pylance catch bugs and make your code read like TypeScript. Use them in your `dsalib` and in solutions.
+
+```python
+def two_sum(nums: list[int], target: int) -> list[int]: ...
+def group(words: list[str]) -> dict[str, list[str]]: ...
+def find(root: TreeNode | None, k: int) -> int | None: ...   # `X | None` is like TS `X | null`
+def neighbors(r: int, c: int) -> list[tuple[int, int]]: ...
+
+from typing import Optional    # older style: Optional[int] means int | None (you'll see it on LeetCode)
+```
+
+Use the lowercase built-ins (`list[int]`, `dict[str, int]`). `List`/`Dict` from `typing` are the pre-3.9 style.
+
+### 2.20 The cost cheat sheet
+
+This table is the most important part of the module. Average-case complexities for CPython; n = the container's size, k = the size of the other argument or slice.
+
+**list** (dynamic array)
+
+| Operation | Cost | Notes |
+|---|---|---|
+| `a[i]`, `a[i] = x`, `len(a)` | O(1) | |
+| `a.append(x)` | O(1) amortized | Occasionally O(n) when it resizes (Module 01) |
+| `a.pop()` | O(1) | From the end |
+| `a.pop(0)`, `a.insert(0, x)` | **O(n)** | Shifts every element. Use `deque` |
+| `a.pop(i)`, `a.insert(i, x)`, `del a[i]` | O(n − i) | Shifts everything after i |
+| `x in a`, `a.index(x)`, `a.count(x)`, `a.remove(x)` | **O(n)** | A linear scan: a full table scan |
+| `a[i:j]` | O(j − i) | **A copy**, not a view |
+| `a + b` | O(len(a) + len(b)) | A new list |
+| `a.extend(b)` | O(len(b)) amortized | |
+| `a.sort()`, `sorted(a)` | O(n log n) | About O(n) if already sorted |
+| `min(a)`, `max(a)`, `sum(a)`, `a.reverse()`, `a.copy()` | O(n) | |
+| `a == b` | O(n) | Element by element |
+
+**dict / set** (hash tables)
+
+| Operation | Cost | Notes |
+|---|---|---|
+| `d[k]`, `d[k] = v`, `del d[k]`, `k in d`, `d.get(k)` | O(1) average | O(n) worst case under heavy collisions (Module 03) |
+| `s.add(x)`, `x in s`, `s.discard(x)` | O(1) average | |
+| `x in d.values()` | **O(n)** | Values aren't indexed. Only keys are |
+| Iterating over a dict or set | O(n) | |
+| `set(a)`, `dict(...)` | O(n) | Building costs a full pass |
+| `s \| t` | O(len(s) + len(t)) | |
+| `s & t` | O(min(len(s), len(t))) | Iterates over the smaller set |
+| `s - t` | O(len(s)) | |
+
+Hashing a key costs O(key length), so a dict keyed by strings of length L is really O(L) per operation. That matters for problems like Group Anagrams, where you should say "O(n · L)".
+
+**deque**
+
+| Operation | Cost |
+|---|---|
+| `append`, `appendleft`, `pop`, `popleft`, `q[0]`, `q[-1]` | O(1) |
+| `q[i]` in the middle, `x in q` | O(n) |
+| `q.rotate(k)` | O(k) |
+
+**heapq**
+
+| Operation | Cost |
+|---|---|
+| `heappush`, `heappop`, `heapreplace`, `heappushpop` | O(log n) |
+| `h[0]` (peek) | O(1) |
+| `heapify(a)` | O(n) |
+| `nlargest(k, a)`, `nsmallest(k, a)` | O(n log k) |
+
+**bisect**
+
+| Operation | Cost |
+|---|---|
+| `bisect_left`, `bisect_right` | O(log n) |
+| `insort` | O(n): O(log n) to find the spot, O(n) to shift |
+
+**str** (immutable)
+
+| Operation | Cost | Notes |
+|---|---|---|
+| `s[i]`, `len(s)` | O(1) | |
+| `s[i:j]` | O(j − i) | A copy |
+| `s + t` | O(len(s) + len(t)) | A new string every time |
+| `"".join(parts)` | O(total length) | The right way to build strings |
+| `sub in s`, `s.find(sub)` | O(n · m) worst case in theory | Usually much faster in CPython. In interviews, say "O(n·m) worst case" |
+| `s.split()`, `s.upper()`, `s.replace(...)`, `s[::-1]` | O(n) | |
+
+**Counter**
+
+| Operation | Cost |
+|---|---|
+| `Counter(iterable)` | O(n) |
+| `c[x]`, `c[x] += 1` | O(1) average |
+| `c.most_common(k)` | O(u log k), where u = the number of distinct keys |
+| `c.most_common()` (no k) | O(u log u) |
+| `c1 == c2` | O(u) |
+
+### 2.21 Gotcha summary
+
+| Gotcha | What happens | Fix |
+|---|---|---|
+| `[[0] * m] * n` | All the rows are the same list | `[[0] * m for _ in range(n)]` |
+| `def f(acc=[])` | The default is shared across calls | Default to `None`, then create the list inside |
+| `x = a.sort()` | `x` is `None` | `x = sorted(a)` |
+| `-7 // 2` | `-4`, not `-3` | `int(-7 / 2)` when you need truncation |
+| `round(2.5)` | `2` | Banker's rounding. Rarely matters, but know it |
+| `defaultdict` read | Reading a missing key inserts it | Use `in` or `.get()` to check |
+| `{}` | An empty **dict**, not a set | `set()` |
+| `(5)` | Just the int 5 | `(5,)` is a one-element tuple |
+| `heappush(h, (1, node))` with ties | `TypeError` comparing nodes | `(1, counter, node)` |
+| `res.append(path)` in backtracking | Every result is the same list | `res.append(path[:])` |
+| Deep recursion | `RecursionError` past 1000 frames | An iterative version with an explicit stack |
+| `is` for comparing numbers or strings | Sometimes works, sometimes doesn't (caching) | `==`. Use `is` only for `None` |
+
+---
+
+## 3. Drills
+
+Put these in `drills/00/`. Type everything yourself; don't paste.
+
+**D1. TS → Python translation (45 min)**
+Translate each into idiomatic Python (comprehensions, `Counter`/`defaultdict` where appropriate, type hints). Then run them on a couple of inputs.
+
+```ts
+// (a)
+function evensSquared(nums: number[]): number[] {
+  return nums.filter(n => n % 2 === 0).map(n => n * n);
+}
+
+// (b)
+function wordFreq(text: string): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const w of text.toLowerCase().split(/\s+/).filter(Boolean)) {
+    m.set(w, (m.get(w) ?? 0) + 1);
+  }
+  return m;
+}
+
+// (c)
+function groupByStatus(jobs: {id: string; status: string}[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const j of jobs) {
+    (out[j.status] ??= []).push(j.id);
+  }
+  return out;
+}
+
+// (d)
+function transpose(m: number[][]): number[][] {
+  return m[0].map((_, c) => m.map(row => row[c]));
+}
+
+// (e)
+function topNByScore(users: {name: string; score: number}[], n: number): string[] {
+  return [...users]
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    .slice(0, n)
+    .map(u => u.name);
+}
+```
+
+For (c), the jobs become a list of dicts: `[{"id": "j1", "status": "done"}, ...]`. For (d), there's a famous one-liner with `zip(*m)`. Find it after you've written the comprehension version.
+
+**D2. Predict the output (20 min)**
+Write down your prediction for each one *before* running it. Then run it and check the answer key.
+
+```python
+# 1
+print(-7 // 2, -7 % 2)
+
+# 2
+grid = [[0] * 3] * 3
+grid[1][1] = 5
+print(grid)
+
+# 3
+def add(x, acc=[]):
+    acc.append(x)
+    return acc
+add(1)
+print(add(2))
+
+# 4
+print(sorted([10, 9, 1, 100]))
+
+# 5
+a = [1, 2, 3]; b = a; c = a[:]
+a.append(4)
+print(b, c)
+
+# 6
+x = [3, 1, 2]
+y = x.sort()
+print(x, y)
+
+# 7
+from collections import defaultdict
+d = defaultdict(int)
+if d["ghost"] == 0:
+    pass
+print(len(d))
+
+# 8
+from collections import Counter
+c = Counter("hello")
+print(c["l"], c["z"], len(c))
+
+# 9
+print(bool([0]), bool([]), bool("0"), bool(0))
+
+# 10
+print((1, 2) < (1, 3), "Zebra" < "apple", [2] < [1, 9])
+
+# 11
+import heapq
+h = []
+for v in [5, 1, 8, 3]:
+    heapq.heappush(h, -v)
+print(-heapq.heappop(h), -h[0])
+
+# 12
+import bisect
+a = [1, 3, 3, 3, 7]
+print(bisect.bisect_left(a, 3), bisect.bisect_right(a, 3), bisect.bisect_left(a, 4))
+```
+
+**D3. collections kata (40 min)**
+Write each as a function with type hints, plus a few `assert`s:
+
+1. `first_unique_char(s: str) -> int`: the index of the first character that appears exactly once, or −1. Use `Counter`. (This is LeetCode 387.)
+2. `group_by_length(words: list[str]) -> dict[int, list[str]]` using `defaultdict(list)`.
+3. `is_anagram(a: str, b: str) -> bool`: do it two ways, with `Counter` and with a 26-slot list using `ord(c) - ord("a")`.
+4. `last_k(stream: list[int], k: int) -> list[int]`: return the last k items using `deque(maxlen=k)`.
+5. `simulate_queue(ops: list[str]) -> list[str]`: given ops like `["push a", "push b", "pop", "push c", "pop"]`, return the popped items in FIFO order, using a `deque`.
+
+**D4. heapq kata (40 min)**
+1. `k_smallest(nums, k)`: once with `heapq.nsmallest`, and once by hand with a **max-heap of size k** (negated values). Push each number; if the heap grows past k, pop. Why is this O(n log k)?
+2. `merge_sorted(lists: list[list[int]]) -> list[int]`: merge k sorted lists with a heap of `(value, list_index, element_index)` tuples. (This is the core of LeetCode 23 and of external merge sort in databases.)
+3. `schedule(jobs: list[tuple[int, str]]) -> list[str]`: jobs are `(priority, name)` pairs, where a lower number is more urgent. Return the names in execution order. Then make ties run in **insertion order** (hint: a counter as the second tuple element).
+
+**D5. bisect kata (25 min)**
+Given a sorted list of request timestamps (ints, in seconds):
+1. `count_in_range(ts, start, end) -> int`: the number of requests with `start <= t < end`, in O(log n).
+2. `first_at_or_after(ts, t) -> int | None`: the first timestamp ≥ t, or `None`.
+3. Explain out loud why calling `insort` 10^5 times is O(n²) overall, even though the search is O(log n).
+
+**D6. Sorting kata (25 min)**
+1. Sort `[("ana", 31), ("bo", 25), ("cy", 31), ("dee", 25)]` by age descending, then name ascending. Use one `sorted` call with a tuple key.
+2. Sort the words of a sentence by frequency descending, then alphabetically. Return the unique words.
+3. Sort a list of `"HH:MM"` strings by time. (Does plain `sorted()` work? Why?)
+4. **Stability:** sort the people from (1) by name first, then by age only. Explain the result.
+
+**D7. Recursion limit experiment (15 min)**
+1. Write a recursive `length(node)` for a linked list. Build a list of 5,000 nodes and call it. What happens?
+2. Rewrite it iteratively.
+3. Try `sys.setrecursionlimit(10**5)` and call the recursive version on 5,000 nodes, then on 500,000. Write down what happens at each size. (Don't be surprised by a segfault on the big one; that's the lesson.)
+
+**D8. Predict the cost (20 min)**
+For each snippet, write the time complexity in terms of n = `len(nums)` (and other named sizes). Some are traps.
+
+```python
+# 1
+def has_dup(nums):
+    seen = []
+    for x in nums:
+        if x in seen:
+            return True
+        seen.append(x)
+    return False
+
+# 2
+def has_dup(nums):
+    seen = set()
+    for x in nums:
+        if x in seen:
+            return True
+        seen.add(x)
+    return False
+
+# 3
+def drain(nums):
+    while nums:
+        nums.pop(0)
+
+# 4
+def largest(nums):
+    nums.sort()
+    return nums[-1]
+
+# 5
+def suffixes(nums):
+    return [sum(nums[i:]) for i in range(len(nums))]
+
+# 6: words has n items, and k is a small constant
+from collections import Counter
+def top_k(words, k):
+    return Counter(words).most_common(k)
+
+# 7
+import bisect
+def build_sorted(nums):
+    out = []
+    for x in nums:
+        bisect.insort(out, x)
+    return out
+
+# 8
+def in_values(d, targets):        # d has n entries, targets has m items
+    return [t for t in targets if t in d.values()]
+
+# 9
+def front_load(nums):
+    out = []
+    for x in nums:
+        out.insert(0, x)
+    return out
+
+# 10
+import heapq
+def k_smallest(nums, k):
+    heapq.heapify(nums)
+    return [heapq.heappop(nums) for _ in range(k)]
+```
+
+**D9. Your first three LeetCode problems (45 min)**
+These are for syntax practice only. Don't worry about patterns yet. Solve each on LeetCode in Python, and write the complexity in a comment at the top:
+- 1929. Concatenation of Array
+- 217. Contains Duplicate (do it twice: once with a set, once with sorting. Compare the complexities.)
+- 242. Valid Anagram (with `Counter`, then with a 26-slot array)
+
+Log all three in [PROGRESS.md](../PROGRESS.md).
+
+---
+
+## 4. Build: `logstats`, an access log analyzer (1.5–2 hrs)
+
+You've written log processing in Node. Now write it in Python, using every tool from this module. It's a realistic backend task, and every function maps to a DSA idea you'll study properly later.
+
+**Step 1.** Save this as `drills/00/gen_logs.py` and run it to create `access.log` (200,000 lines):
+
+```python
+import random
+
+random.seed(42)
+paths = ["/api/users", "/api/orders", "/api/orders/:id", "/api/login",
+         "/api/search", "/health", "/api/cart", "/api/checkout"]
+ips = [f"10.0.{random.randint(0, 9)}.{random.randint(1, 254)}" for _ in range(300)]
+statuses = [200] * 90 + [201] * 3 + [400] * 3 + [404] * 2 + [500] * 2
+
+t = 1_760_000_000
+with open("access.log", "w") as f:
+    for _ in range(200_000):
+        t += random.choice([0, 0, 0, 1])
+        ip = random.choice(ips[:20]) if random.random() < 0.3 else random.choice(ips)
+        f.write(f"{t} {ip} GET {random.choice(paths)} {random.choice(statuses)} "
+                f"{int(random.expovariate(1 / 80))}\n")
+```
+
+Each line looks like this: `<unix_ts> <ip> <method> <path> <status> <latency_ms>`.
+
+**Step 2.** Write `drills/00/logstats.py` with these functions. Each one gets type hints and a docstring stating its time and space complexity:
+
+| Function | Returns | Tool |
+|---|---|---|
+| `parse(path) -> list[Request]` | Parsed lines. `Request` is a `@dataclass` | file iteration, `str.split`, `dataclass` |
+| `status_counts(reqs) -> dict[int, int]` | Status code → count | `Counter` |
+| `top_endpoints(reqs, k) -> list[tuple[str, int]]` | The k most-hit paths | `Counter.most_common`, then again with `heapq.nlargest` |
+| `percentiles(reqs, ps=(50, 95, 99)) -> dict[int, int]` | Latency percentiles (nearest-rank: index `ceil(p/100 * n) - 1` on the sorted latencies) | `sorted` |
+| `slowest(reqs, k) -> list[Request]` | The k slowest requests | `heapq.nlargest(k, reqs, key=...)` |
+| `requests_by_ip(reqs) -> dict[str, list[int]]` | IP → its timestamps | `defaultdict(list)` |
+| `count_between(timestamps, start, end) -> int` | How many requests fall in `[start, end)` | `bisect` on the sorted timestamps |
+| `bursty_ips(reqs, limit, window_s) -> set[str]` | IPs that made more than `limit` requests within any `window_s`-second window | a `deque` per IP: append the timestamp, `popleft` while the oldest is outside the window, and flag the IP if `len > limit` |
+
+`bursty_ips` is a sliding-window rate limiter, the same logic as an API gateway's "100 requests per 10 seconds" rule. You'll formalize it in Module 05.
+
+**Step 3.** Add a `main()` that prints a report:
+
+```
+Requests: 200000
+Status:   200=180112  201=6011  400=5987 ...
+Top 5:    /api/orders (25201), ...
+Latency:  p50=56ms  p95=240ms  p99=368ms
+Bursty IPs (>30 req / 10s): 4 → 10.0.3.17, ...
+```
+
+(Your numbers will differ.)
+
+**Step 4.** Write `tests/test_logstats.py` with pytest. Use small handwritten request lists (5–10 requests), so you know the right answers by hand. Cover each function and these edge cases: an empty list, k larger than the number of distinct paths, and one IP exactly at the limit (it shouldn't be flagged).
+
+**Step 5.** Time the whole run (`time python3 drills/00/logstats.py`). Then change `requests_by_ip` to deliberately use a `list` with `in` checks to find "already seen" IPs, and time it again. Note the difference in your PROGRESS.md notes. That's the Module 01 lesson, previewed.
+
+Commit it to `dsa-journey`.
+
+---
+
+## 5. Checkpoint
+
+Answer these out loud, without notes. If you get stuck on one, re-read that section.
+
+1. What do `-7 // 2` and `-7 % 2` return in Python, and how does that differ from JavaScript? How do you get truncating division?
+2. Why is `[[0] * 3] * 3` a bug? What's the correct way to build a grid?
+3. Why can a tuple be a dict key but a list can't? Give two DSA uses for tuple keys.
+4. What's the cost of `x in my_list` versus `x in my_set`? What about `x in my_dict.values()`?
+5. Why use `deque` for a queue instead of `list`? What does each operation cost on both?
+6. How do you get a max-heap with `heapq`? How do you push items with priorities, and what goes wrong when priorities tie?
+7. What do `bisect_left` and `bisect_right` return for a value that appears several times? How do you count occurrences with them?
+8. How do you sort by one key descending and another key ascending in a single `sorted` call? Why does stability matter?
+9. What's Python's default recursion limit, what happens when you exceed it, and what's the right fix for deep recursion?
+10. Name three operations that look O(1) but are O(n), and say what to use instead.
+
+---
+
+## 6. Resources
+
+**Required**
+- Python docs: [*`collections`*](https://docs.python.org/3/library/collections.html) (read `deque`, `defaultdict`, and `Counter`) and [*`heapq`*](https://docs.python.org/3/library/heapq.html) (the intro and the "Priority Queue Implementation Notes")
+- Python wiki: [*TimeComplexity*](https://wiki.python.org/moin/TimeComplexity). Bookmark it.
+
+**Recommended**
+- Python docs: [*Sorting Techniques*](https://docs.python.org/3/howto/sorting.html), which covers key functions, stability, and multi-key sorting in 10 minutes
+- If you want a structured Python refresher: the official [*Python Tutorial*](https://docs.python.org/3/tutorial/), sections 3–5 and 9. Skim it; you know programming already.
+
+---
+
+## Answer key
+
+Don't open these until you've committed to your answers.
+
+<details>
+<summary>D1: TS → Python (one good version)</summary>
+
+```python
+from collections import Counter, defaultdict
+
+def evens_squared(nums: list[int]) -> list[int]:
+    return [n * n for n in nums if n % 2 == 0]
+
+def word_freq(text: str) -> Counter[str]:
+    return Counter(text.lower().split())   # split() with no args splits on any whitespace and drops empties
+
+def group_by_status(jobs: list[dict[str, str]]) -> dict[str, list[str]]:
+    out: defaultdict[str, list[str]] = defaultdict(list)
+    for j in jobs:
+        out[j["status"]].append(j["id"])
+    return dict(out)
+
+def transpose(m: list[list[int]]) -> list[list[int]]:
+    return [[row[c] for row in m] for c in range(len(m[0]))]
+    # one-liner: [list(col) for col in zip(*m)]
+
+def top_n_by_score(users: list[dict], n: int) -> list[str]:
+    ranked = sorted(users, key=lambda u: (-u["score"], u["name"]))
+    return [u["name"] for u in ranked[:n]]
+```
+</details>
+
+<details>
+<summary>D2: Predict the output</summary>
+
+1. `-4 1`: floor division rounds toward −infinity, and the remainder takes the divisor's sign.
+2. `[[0, 5, 0], [0, 5, 0], [0, 5, 0]]`: all three rows are the same list object.
+3. `[1, 2]`: the default list was created once and is shared between calls.
+4. `[1, 9, 10, 100]`: numeric sort. (JS would give `[1, 10, 100, 9]`.)
+5. `[1, 2, 3, 4] [1, 2, 3]`: `b` is an alias, `c` is a copy.
+6. `[1, 2, 3] None`: `sort()` sorts in place and returns `None`.
+7. `1`: reading `d["ghost"]` inserted it with the value 0.
+8. `2 0 4`: `Counter` returns 0 for missing keys without inserting them. Distinct letters: h, e, l, o.
+9. `True False True False`: `[0]` is a non-empty list, and `"0"` is a non-empty string.
+10. `True True False`: `'Z'` (90) < `'a'` (97). `[2] < [1, 9]` compares 2 to 1 first, so it's False.
+11. `8 5`: popping gives the max, 8. The next max is 5.
+12. `1 4 4`: the leftmost 3 is at index 1, the index after the last 3 is 4, and 4 would be inserted at index 4.
+</details>
+
+<details>
+<summary>D4.1: why the size-k max-heap is O(n log k)</summary>
+
+The heap never holds more than k + 1 items, so each push and pop costs O(log k). We do n pushes and at most n pops: O(n log k) time and O(k) space. Heapifying all n items and popping k would be O(n + k log n) time but O(n) space (or a mutated input). When k is much smaller than n and the data is a stream, the size-k heap wins.
+</details>
+
+<details>
+<summary>D5.3: why repeated insort is O(n²)</summary>
+
+Each `insort` finds the position in O(log n), but inserting into a Python list shifts every later element: O(n). Over n inserts, that's 1 + 2 + ... + n = O(n²) shifting in the worst case (and on average too, since the insert point is uniformly random for random input). Sorting once at the end, at O(n log n), is far better. If you need a sorted collection that supports fast inserts, you need a balanced tree or skip list (e.g., the `sortedcontainers` package, which isn't available in interviews).
+</details>
+
+<details>
+<summary>D6.3 and D6.4</summary>
+
+- **D6.3:** Yes. Zero-padded `"HH:MM"` strings sort correctly as strings, because lexicographic order matches time order when every field has a fixed width. `"9:05"` without padding would break it.
+- **D6.4:** Sorting by name, then (stably) by age, gives: age 25 → `bo`, `dee`; age 31 → `ana`, `cy`. Within the same age, the earlier name order survives because the sort is stable. That's how you do a multi-key sort in two passes: secondary key first, then primary key.
+</details>
+
+<details>
+<summary>D7: recursion limit</summary>
+
+1. With 5,000 nodes: `RecursionError: maximum recursion depth exceeded`, because the default limit is 1000.
+2. Iterative: `n = 0; while node: n += 1; node = node.next`. That's O(n) time and O(1) space.
+3. With the limit raised, 5,000 nodes usually works. At 500,000 nodes, the C stack typically overflows and the process segfaults ("Segmentation fault (core dumped)"), with no Python traceback. The lesson: raising the limit doesn't add stack memory. Convert deep recursion to iteration.
+</details>
+
+<details>
+<summary>D8: Predict the cost</summary>
+
+1. **O(n²)**: `x in seen` scans a list that grows to n.
+2. **O(n)**: set membership is O(1) on average. Space O(n).
+3. **O(n²)**: each `pop(0)` shifts the remaining elements, so (n−1) + (n−2) + ... + 0 is about n²/2.
+4. **O(n log n)**: a sort to find a max that `max()` gets in O(n). (It also mutates the caller's list, which is a side effect.)
+5. **O(n²)**: each `nums[i:]` copies n − i elements and `sum` reads them again. Σ(n − i) = n(n+1)/2. A running suffix sum does it in O(n).
+6. **O(n + u log k)**: O(n) to count, where u is the number of distinct words, then O(u log k) for the top k. With k a small constant, that's O(n).
+7. **O(n²)**: n inserts, each O(n) to shift (see D5.3). `sorted(nums)` would be O(n log n).
+8. **O(n · m)**: `d.values()` isn't a hash lookup. It scans all n values, m times. Build `vals = set(d.values())` once for O(n + m).
+9. **O(n²)**: `insert(0, x)` shifts the whole list every time. Append and reverse once at the end, or use `deque.appendleft`: O(n).
+10. **O(n + k log n)**: `heapify` is O(n), then k pops at O(log n) each. (It also mutates the input.)
+</details>
