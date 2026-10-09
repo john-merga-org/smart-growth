@@ -51,6 +51,18 @@ Pure Python runs roughly **10⁷ simple operations per second** (C, C++, and Go 
 
 No micro-optimization closes that gap. Only a better algorithm does. That's why we care about growth rate more than anything else.
 
+<Card id="what-big-o-measures" q="What does Big-O measure, and why not seconds?">
+
+How the count of basic steps grows as the input size n grows. Seconds depend on the machine, language and load; growth rate doesn't.
+
+</Card>
+
+<Card id="python-ops-per-second" q="Roughly how many simple operations per second does pure Python run, and what does that mean for O(n²) at n = 10⁶?">
+
+About 10⁷ per second. O(n²) at n = 10⁶ is 10¹² steps, about 28 hours; O(n log n) is about 2 seconds.
+
+</Card>
+
 ### 2.2 The formal definitions
 
 **Big-O (an upper bound).** f(n) = O(g(n)) means there are constants c > 0 and n₀ such that:
@@ -71,6 +83,18 @@ The other two you should know:
 
 Strictly speaking, binary search is O(log n), and also O(n) and O(n²), because those are all valid upper bounds. That isn't useful, though. **In interviews and in industry, "Big-O" means the tightest bound you can give**, which is really Θ. Say "binary search is O(log n)", never "O(n)".
 
+<Card id="big-o-definition" q="State the formal definition of f(n) = O(g(n)).">
+
+There exist constants c > 0 and n₀ such that f(n) ≤ c · g(n) for all n ≥ n₀. Past some size, f grows no faster than g, up to a constant factor.
+
+</Card>
+
+<Card id="omega-theta" q="What do Ω and Θ mean, and which one do people mean when they say Big-O?">
+
+Ω is a lower bound (grows at least like g); Θ is a tight bound (both O and Ω). In interviews "Big-O" means the tightest bound, which is really Θ.
+
+</Card>
+
 ### 2.3 Simplification rules
 
 1. **Drop constant factors.** O(3n) → O(n). O(n/2) → O(n). Constants depend on the hardware and the language; growth doesn't.
@@ -78,7 +102,19 @@ Strictly speaking, binary search is O(log n), and also O(n) and O(n²), because 
 3. **Keep independent inputs separate.** Two arrays of sizes n and m are **O(n + m)** or **O(n · m)**, not O(n) or O(n²). A grid is O(rows · cols). A graph is O(V + E). Collapsing them loses information. Interviewers notice.
 4. **Log bases don't matter.** log₂ n and log₁₀ n differ only by a constant factor (log₂ n = log₁₀ n / log₁₀ 2 ≈ 3.32 · log₁₀ n). So we just write O(log n).
 
-**But constants do matter in practice.** An O(1) operation that makes a 50 ms network call loses to an O(log n) in-memory lookup at any realistic n. Big-O compares *growth*; it doesn't say which is faster at a particular n. For small n (say < 50), a "worse" algorithm with a tiny constant often wins. That's why Python's sort uses insertion sort on small runs. Use Big-O to rule out approaches that can't scale, then think about constants.
+**But constants do matter in practice.** An O(1) operation that makes a 50 ms network call loses to an O(log n) in-memory lookup at any realistic n. Big-O compares *growth*; it doesn't say which is faster at a particular n. For small n (say &lt; 50), a "worse" algorithm with a tiny constant often wins. That's why Python's sort uses insertion sort on small runs. Use Big-O to rule out approaches that can't scale, then think about constants.
+
+<Card id="simplification-rules" q="What are the four Big-O simplification rules?">
+
+Drop constant factors; drop lower-order terms; keep independent inputs separate (O(n + m), O(n · m)); log bases don't matter.
+
+</Card>
+
+<Card id="constants-matter" q="When does a worse Big-O class beat a better one?">
+
+At small n, or when the 'O(1)' hides a huge constant (a 50 ms network call loses to an in-memory O(log n) lookup). Big-O compares growth, not speed at a given n.
+
+</Card>
 
 ### 2.4 The complexity ladder
 
@@ -94,7 +130,13 @@ Strictly speaking, binary search is O(log n), and also O(n) and O(n²), because 
 | O(2ⁿ) | Exponential | All subsets, naive recursive Fibonacci | Trying every combination of feature flags |
 | O(n!) | Factorial | All permutations | Brute-forcing a delivery route over n stops |
 
-Memorize this ordering: **1 < log n < √n < n < n log n < n² < n³ < 2ⁿ < n!**
+Memorize this ordering: **1 &lt; log n &lt; √n &lt; n &lt; n log n &lt; n² &lt; n³ &lt; 2ⁿ &lt; n!**
+
+<Card id="complexity-ladder" q="Order the common complexity classes from slowest-growing to fastest-growing.">
+
+1 &lt; log n &lt; √n &lt; n &lt; n log n &lt; n² &lt; n³ &lt; 2ⁿ &lt; n!
+
+</Card>
 
 ### 2.5 Best, worst, and average case
 
@@ -124,6 +166,18 @@ Where the distinction really matters:
 
 **The backend connection:** the hash map worst case isn't just theoretical. In 2011, "hash flooding" attacks sent web servers POST bodies full of keys crafted to collide, turning every parameter lookup into O(n) and a single request into seconds of CPU. That's why Python (since 3.3) randomizes string hashing per process: you'll see `hash("abc")` change between runs. The average case only holds if inputs aren't adversarial.
 
+<Card id="hashmap-quicksort-worst" q="Average and worst case for hash map lookup and quicksort, and what causes each worst case?">
+
+Hash map: O(1) average, O(n) worst (many keys collide in one bucket). Quicksort: O(n log n) average, O(n²) worst (bad pivots split n into 0 and n−1).
+
+</Card>
+
+<Card id="default-case" q="When someone says an algorithm is O(f(n)) without a qualifier, which case do they mean?">
+
+The worst case. The exception is hash maps, where 'O(1)' means average; say 'O(1) on average' to be precise.
+
+</Card>
+
 ### 2.6 Amortized analysis: why `list.append` is O(1)
 
 A Python `list` is a **dynamic array**: a contiguous block of memory with some spare capacity at the end.
@@ -144,8 +198,8 @@ copies:     0   1   2   0   4   0   0   0   8  ...
 ```
 
 - Every append writes one element: **n writes** in total.
-- The copies happen at sizes 1, 2, 4, 8, ... up to below n: 1 + 2 + 4 + ... + 2ᵏ < **2n copies** in total (a geometric series sums to less than twice its last term, which is < n).
-- Total work < n + 2n = **3n**. Over n appends, that's **< 3 per append: O(1) amortized**.
+- The copies happen at sizes 1, 2, 4, 8, ... up to below n: 1 + 2 + 4 + ... + 2ᵏ &lt; **2n copies** in total (a geometric series sums to less than twice its last term, which is &lt; n).
+- Total work &lt; n + 2n = **3n**. Over n appends, that's **&lt; 3 per append: O(1) amortized**.
 
 **Another way to see it (the "banking" view):** charge every append 3 coins. One coin pays for its own write; two go into the bank. Right after a resize to capacity 2m, the array holds m items. By the time it's full again, m new items have each banked 2 coins, so there are 2m coins: exactly enough to copy all 2m items into the next block. The bank never goes negative, so 3 coins per append always covers the cost.
 
@@ -173,6 +227,24 @@ Any **geometric** growth factor r > 1 gives amortized O(1). The total copies are
 #### Why amortized matters on the backend
 
 Amortized O(1) still means **one specific operation can take O(n)**. In a request handler, that's a latency spike: the p99 request that happened to trigger the resize. Redis knows this. When its hash table needs to grow, it **rehashes incrementally**, moving a few buckets on each subsequent operation instead of all at once, so no single command stalls the server. That's the same total work, spread out to protect tail latency. Remember this when someone says "it's O(1) amortized, so it's fine".
+
+<Card id="amortized-append" q="Why is list.append amortized O(1)?">
+
+Capacity grows geometrically, so the copies over n appends total O(n) (1 + 2 + 4 + ... &lt; 2n). That's O(1) per append on average over the sequence.
+
+</Card>
+
+<Card id="fixed-growth-fails" q="Why does growing a dynamic array by a fixed +100 slots fail to give amortized O(1)?">
+
+Resizes happen every 100 appends and copy 100, 200, 300, ... elements: about n²/200 total, which is O(n) per append. Growth must be multiplicative.
+
+</Card>
+
+<Card id="amortized-vs-average" q="How is amortized cost different from average-case cost?">
+
+Amortized averages over a sequence of operations on one structure and is a deterministic guarantee. Average case averages over random inputs and gives no guarantee for a bad input.
+
+</Card>
 
 ### 2.7 Time vs space
 
@@ -210,6 +282,18 @@ Note the last one. In many textbooks, "sorting in place" is treated as O(1) or O
 | A memo table | Exponential → polynomial recursion | A read-through cache |
 | A prefix-sum array | O(n) → O(1) range sums | A precomputed rollup/materialized view |
 | A sorted copy | O(n) → O(log n) lookups | A B-tree index (disk space for query speed) |
+
+<Card id="what-counts-as-space" q="What counts toward (auxiliary) space complexity?">
+
+Extra memory beyond the input. The output usually isn't counted (say so if it matters). The recursion stack does count: n calls deep is O(n) space.
+
+</Card>
+
+<Card id="timsort-space" q="What extra space does Python's sort use?">
+
+Up to O(n) auxiliary memory: Timsort's merge buffer (and `sorted()` also copies the input). Say this if an interviewer asks for O(1) space.
+
+</Card>
 
 ### 2.8 Analyzing iterative code
 
@@ -287,6 +371,24 @@ for i in range(1, n + 1):
 ```
 This is rarer, but it's how the Sieve of Eratosthenes is analyzed.
 
+<Card id="sequential-vs-nested" q="Two loops over n: when is it O(n) and when O(n²)?">
+
+Sequential loops add: O(n + n) = O(n). Only nested loops multiply: O(n · n) = O(n²).
+
+</Card>
+
+<Card id="pointer-amortization" q="Why can a sliding window with a while inside a for still be O(n)?">
+
+The inner pointer only moves forward and never resets, so it moves at most n times across the whole run. Total work is n + n = O(n).
+
+</Card>
+
+<Card id="log-loop" q="What loop shape gives O(log n)?">
+
+A loop variable that is multiplied or divided by a constant each step (`i *= 2`, `n //= 2`).
+
+</Card>
+
 ### 2.9 Building intuition for log n
 
 **log₂ n answers one question: "how many times can I halve n before I reach 1?"** (Or equivalently, "how many times must I double 1 to reach n?")
@@ -308,6 +410,18 @@ Where logs come from:
 - **The number of digits:** n has about log₁₀ n decimal digits (and log₂ n bits). "Loop over the digits of n" is O(log n).
 
 **The database connection:** a B-tree index node holds hundreds of keys, not 2, so its height is log₍fanout₎ n instead of log₂ n. With a fanout around 500, 500³ = 1.25 × 10⁸ and 500⁴ ≈ 6 × 10¹⁰. So **an index over hundreds of millions of rows is only 3–4 levels deep**, and the top levels stay cached in memory. That's why an indexed lookup feels like O(1) even though it's O(log n).
+
+<Card id="log-n-meaning" q="What question does log₂ n answer, and what is it for n = 10⁹?">
+
+How many times you can halve n before reaching 1. For a billion, about 30.
+
+</Card>
+
+<Card id="btree-depth" q="Why is a B-tree index over hundreds of millions of rows only 3–4 levels deep?">
+
+Each node holds hundreds of keys, so height is log base fanout (~500) of n, not log₂ n: 500⁴ ≈ 6 × 10¹⁰.
+
+</Card>
 
 ### 2.10 Analyzing recursive code: recursion trees
 
@@ -356,7 +470,7 @@ def bs(nums, target, lo, hi):            # indices: no copying
 
 T(n) = T(n/2) + O(1). That's log n levels with O(1) each: **O(log n) time, O(log n) stack space** (O(1) if written as a loop).
 
-If you write it with slices instead (`bs(nums[mid+1:], target)`), it becomes T(n) = T(n/2) + O(n). The work is n + n/2 + n/4 + ... < 2n = **O(n)**. Slicing silently turned your binary search into a linear scan.
+If you write it with slices instead (`bs(nums[mid+1:], target)`), it becomes T(n) = T(n/2) + O(n). The work is n + n/2 + n/4 + ... &lt; 2n = **O(n)**. Slicing silently turned your binary search into a linear scan.
 
 #### Example D: naive Fibonacci (exponential)
 
@@ -417,7 +531,7 @@ level 2:   [n/4] [n/4] [n/4] [n/4]            work: 4 · n/4 = n
 level log n: [1][1][1] ... [1]   (n leaves)   work: n
 ```
 
-Every level does O(n) total work (slicing plus merging), and there are log₂ n levels: **O(n log n) time.** The slices on the current path total n + n/2 + n/4 + ... < 2n, and the merge output is O(n), so the **space is O(n)**.
+Every level does O(n) total work (slicing plus merging), and there are log₂ n levels: **O(n log n) time.** The slices on the current path total n + n/2 + n/4 + ... &lt; 2n, and the merge output is O(n), so the **space is O(n)**.
 
 #### Example F: visiting every node of a tree, O(n)
 
@@ -428,7 +542,7 @@ def count(n: int) -> int:     # think: visit a balanced tree with n nodes
     return 1 + count(n // 2) + count(n // 2)
 ```
 
-T(n) = 2T(n/2) + O(1). The levels have 1, 2, 4, ..., n calls, each doing O(1) work: 1 + 2 + 4 + ... + n < 2n = **O(n)**. Compare this with merge sort: same branching, but O(1) work per call instead of O(n), so the log n factor disappears.
+T(n) = 2T(n/2) + O(1). The levels have 1, 2, 4, ..., n calls, each doing O(1) work: 1 + 2 + 4 + ... + n &lt; 2n = **O(n)**. Compare this with merge sort: same branching, but O(1) work per call instead of O(n), so the log n factor disappears.
 
 For any tree traversal (Module 12), the time is O(n) because each node is visited once. The space is O(h), where h is the height: O(log n) for a balanced tree, but **O(n) for a skewed one** (a "tree" that's really a linked list).
 
@@ -454,13 +568,31 @@ At each element you branch twice (take it or skip it), with n levels of depth. T
 **Optional: the Master Theorem.** For T(n) = a·T(n/b) + O(n^d), compare d with log_b(a):
 - d > log_b(a) → O(n^d): the top level dominates.
 - d = log_b(a) → O(n^d · log n): every level costs the same (merge sort: a = 2, b = 2, d = 1).
-- d < log_b(a) → O(n^(log_b a)): the leaves dominate (tree traversal: a = 2, b = 2, d = 0 → O(n)).
+- d &lt; log_b(a) → O(n^(log_b a)): the leaves dominate (tree traversal: a = 2, b = 2, d = 0 → O(n)).
 
 You don't need it for interviews. The recursion-tree method gives the same answers and is easier to explain out loud.
 
+<Card id="recursion-time-space" q="How do you get time and space for a recursive function?">
+
+Time: total work over all calls (calls × work per call, or sum level by level in a recursion tree). Space: maximum stack depth × frame size, plus data each frame keeps alive.
+
+</Card>
+
+<Card id="branches-depth" q="Rule of thumb for the number of calls in a recursion with b branches and depth d?">
+
+Up to b^d calls; multiply by the work per call. Naive Fibonacci: 2 branches, depth n → O(2ⁿ).
+
+</Card>
+
+<Card id="merge-sort-recurrence" q="Solve T(n) = 2T(n/2) + O(n) and T(n) = 2T(n/2) + O(1).">
+
+O(n log n): log n levels, O(n) work each (merge sort). O(n): 1 + 2 + 4 + ... + n &lt; 2n calls (tree traversal).
+
+</Card>
+
 ### 2.11 Python's built-in costs, and the traps
 
-The full table is in [Module 00 §2.20](00-python-for-dsa.md#220-the-cost-cheat-sheet). Here are the traps that turn O(n) solutions into O(n²) ones without anyone noticing:
+The full table is in [Module 00 §2.20](/c/dsa/00#220-the-cost-cheat-sheet). Here are the traps that turn O(n) solutions into O(n²) ones without anyone noticing:
 
 **Trap 1: `in` on a list inside a loop**
 ```python
@@ -533,6 +665,18 @@ These are all O(n) per call. Hoist anything that doesn't change out of the loop.
 | `x in d.values()` | O(n²) | `set(d.values())` once | O(n) |
 | `bisect.insort` n times | O(n²) | `sorted()` once at the end, or a heap | O(n log n) |
 
+<Card id="python-hidden-on" q="Name Python operations that look cheap but are O(n), with the fix for each.">
+
+`x in list` → set; `list.pop(0)` / `insert(0, x)` → `deque`; `s = c + s` → list + `"".join`; slicing `nums[i:]` → pass indices; `sum(nums[:i])` → running total; `res = res + [x]` → `append`.
+
+</Card>
+
+<Card id="slicing-recursion" q="What does slicing in a recursive call (`f(nums[1:])`) cost?">
+
+An O(n) copy per call: linear recursion becomes O(n²) time (and space, since slices stay alive on the stack); binary search becomes O(n).
+
+</Card>
+
 ### 2.12 Reading the constraints: what complexity do you need?
 
 Every LeetCode problem lists **constraints**, like `1 <= nums.length <= 10^5`. They're the biggest hint in the problem, and most beginners ignore them.
@@ -557,6 +701,24 @@ The logic: the judge allows roughly **10⁷–10⁸ basic operations** in total 
 - A follow-up like "can you do it in O(1) extra space?" tells you a hash map isn't the intended final answer.
 
 **The Best Conceivable Runtime (BCR):** before optimizing, ask what the *lower bound* is. If you have to look at every element at least once, you can't beat O(n). If your solution is O(n log n) and the BCR is O(n), there might be a better solution. If you're already at the BCR, stop optimizing time and look at space.
+
+<Card id="constraint-1e5" q="What does n ≤ 10⁵ tell you?">
+
+O(n²) = 10¹⁰ is too slow; aim for O(n log n) or O(n) (sorting, heaps, hashing, two pointers, sliding window, prefix sums).
+
+</Card>
+
+<Card id="constraint-small-n" q="What do n ≤ 20 and n ≤ 10 suggest?">
+
+n ≤ 20: O(2ⁿ) / O(n · 2ⁿ): subsets, bitmask DP, backtracking. n ≤ 10: O(n!): permutations.
+
+</Card>
+
+<Card id="constraint-answer-range" q="Values up to 10⁹ and 'find the minimum speed/capacity such that...' hint at what?">
+
+Binary search on the answer: O(n · log 10⁹) ≈ O(30n).
+
+</Card>
 
 ### 2.13 Complexity on the backend
 
@@ -608,6 +770,24 @@ A hash index (or Redis) gives O(1) average lookups, but **can't answer range que
 
 Your database's query planner chooses between these using exactly the complexity reasoning in this module.
 
+<Card id="n-plus-one" q="What is the N+1 query problem in Big-O terms, and the fix?">
+
+1 query for the list plus 1 per item: O(n) round trips. Batch into one `WHERE id IN (...)` query (DataLoader) for O(1) round trips, then join in memory with a hash map.
+
+</Card>
+
+<Card id="hash-join" q="Hash join vs nested-loop join complexity, and which DSA problem is a hash join?">
+
+Nested-loop: O(n · m). Hash join: O(n + m), build a map of one side and probe with the other, which is Two Sum.
+
+</Card>
+
+<Card id="offset-pagination" q="Why is OFFSET 100000 LIMIT 20 slow even with an index, and what's the fix?">
+
+It's O(offset + 20): the DB walks and discards the skipped rows. Keyset pagination (`WHERE id > :last_id ORDER BY id LIMIT 20`) is O(log n + 20).
+
+</Card>
+
 ### 2.14 Common mistakes
 
 | Mistake | Correction |
@@ -622,13 +802,26 @@ Your database's query planner chooses between these using exactly the complexity
 | Confusing amortized with average | Amortized is a deterministic guarantee over a sequence. Average is about random inputs. |
 | Ignoring string/key length | Sorting each of n words of length L inside a loop is O(n · L log L), not O(n). |
 
+<Card id="o1-not-fast" q="Does O(1) mean fast?">
+
+No. It means the cost doesn't grow with n. A 50 ms network call is O(1).
+
+</Card>
+
+<Card id="string-length-cost" q="What's the cost of sorting each of n words of length L?">
+
+O(n · L log L), not O(n). Don't ignore key/string length.
+
+</Card>
+
 ---
 
 ## 3. Drills
 
 Put these in `drills/01/`.
 
-**D1. Feel the growth (40 min)**
+<Drill id="d1-feel-the-growth" title="D1. Feel the growth (40 min)">
+
 Type in this harness, then time five functions as n doubles:
 
 ```python
@@ -662,7 +855,24 @@ Write these five functions, each taking a list `nums`:
 
 Use `sizes = [1000, 2000, 4000, 8000]` for quadratic and `[10**5, 2 * 10**5, 4 * 10**5, 8 * 10**5]` for the rest. **Before running anything**, predict the ratio you'll see each time n doubles. Then run it and compare. Which ones are noisy, and why?
 
-**D2. Watch amortized append happen (20 min)**
+<Answer>
+
+| Function | Expected ratio | Notes |
+|---|---|---|
+| `constant` | ~1.0 | Very noisy: the times are microseconds, close to timer resolution |
+| `logarithmic` | ~1.0 (very slightly above) | log₂(2n) / log₂(n) is about 1.05–1.1 at these sizes. It's indistinguishable from O(1) by timing alone |
+| `linear` | ~2.0 | Usually the cleanest result |
+| `linearithmic` | ~2.1–2.2 in theory | In practice anywhere from ~1.8 to ~2.7, because cache effects at larger n add noise. Hard to tell apart from linear |
+| `quadratic` | ~4.0 | Very clear |
+
+The lesson: timing confirms the *big* differences (1 vs n vs n²) easily, but log factors are almost invisible. You need analysis, not just measurement.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-amortized-append" title="D2. Watch amortized append happen (20 min)">
+
 ```python
 import sys
 nums = []
@@ -679,7 +889,18 @@ for i in range(200):
 2. Extend it: for 10⁶ appends, count the total number of resizes and the total number of element copies (at each resize, the copies are `len(nums) - 1`). Divide the copies by 10⁶. Is it a constant? Compare it with the r/(r − 1) formula from §2.6.
 3. Write a `FixedGrowthArray` class that wraps a Python list but simulates growth by +100 slots (just count the "copies" it would do). Plot or print the copies per append for n = 10³, 10⁴, 10⁵. What do you see?
 
-**D3. Fix the traps (45 min)**
+<Answer>
+
+1. Capacities go 4, 8, 16, 24, 32, 40, 52, 64, 76, 92, 108, ... The growth factor tends toward about **1.125** (12.5% plus a small constant).
+2. For 10⁶ appends on CPython 3.12: about **86 resizes** and about **8.4 copies per append**. It's a constant, and close to r/(r − 1) = 1.125/0.125 = 9. That's O(1) amortized.
+3. With +100 growth, the copies per append grow **linearly with n** (about n/200): roughly 5 at n = 10³, 50 at n = 10⁴, and 500 at n = 10⁵. That's O(n) amortized per append, or O(n²) total. Additive growth fails.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-fix-the-traps" title="D3. Fix the traps (45 min)">
+
 Each function is correct but slow. For each one: (a) state its current complexity, (b) rewrite it, (c) state the new complexity, and (d) time both at the given n with the D1 harness.
 
 ```python
@@ -721,7 +942,20 @@ def dedupe(nums: list[int]) -> list[int]:
 
 Bonus: rewrite #3 with `out += line + "\n"` (appending, not prepending) and time it. Is it slow? Why not? (§2.11, Trap 3.) Would you rely on that in an interview?
 
-**D4. Predict the complexity (45 min)**
+<Answer>
+
+1. **O(n · m) → O(n + m).** `b_set = set(b)`, then `[x for x in a if x in b_set]`.
+2. **O(n²) → O(n).** Use `deque([0])` and `popleft()`. The rest is unchanged.
+3. **O(n² · L) → O(n · L)**, where L is the line length. Collect `parts`, then `"\n".join(reversed(parts)) + "\n"` (or iterate `reversed(lines)`). Bonus: `out += ...` (appending) is often fast in CPython because of the in-place resize optimization, but that's an implementation detail. In an interview, use `join` and say why.
+4. **O(n²) → O(n).** Keep a running total: `total += x; out.append(total)` (or `itertools.accumulate(nums)`).
+5. **O(n²) → O(n).** Keep a `seen` set alongside `out`: `if x not in seen: seen.add(x); out.append(x)`. (Or `list(dict.fromkeys(nums))`, which works because dicts keep insertion order.)
+
+</Answer>
+
+</Drill>
+
+<Drill id="d4-predict-complexity" title="D4. Predict the complexity (45 min)">
+
 For each snippet, write the **time** and **auxiliary space** complexity, with a one-line justification. n = `len(nums)` unless stated otherwise. Commit to every answer before you check the key.
 
 ```python
@@ -856,7 +1090,36 @@ def f18(m, n):
 # 18b: the same function WITHOUT @cache?
 ```
 
-**D5. Recursion trees by hand (30 min)**
+<Answer>
+
+| # | Time | Aux. space | Why |
+|---|---|---|---|
+| 1 | O(n) | O(1) | Two sequential loops: n + n |
+| 2 | O(n²) | O(1) | All pairs: n(n−1)/2 |
+| 3 | O(log n) | O(1) | i triples each step: log₃ n steps (bases don't matter) |
+| 4 | O(n log n) | O(1) | n outer iterations × log₂ n inner |
+| 5 | O(n · m) | O(n · m) | Every pair is materialized in the output (O(1) aux if you don't count the output) |
+| 6 | O(n) | O(1) | The inner loop is a constant 4 |
+| 7 | O(n) | O(1) | `left` only moves forward, at most n times in total (Rule 7) |
+| 8 | O(n log n) | O(1) | n/1 + n/2 + ... + n/n = n · Hₙ ≈ n ln n (harmonic) |
+| 9 | O(n²) | O(n) | Prepending copies the whole string each time: 1 + 2 + ... + n |
+| 10 | O(n²) | O(n) | `count` is O(n), called n times. The output can be up to n |
+| 11 | O(2ⁿ) | O(n) | Two branches, depth n: 2ⁿ calls. The stack is n deep |
+| 12 | O(n) | O(log n) | T(n) = 2T(n/2) + O(1): 1 + 2 + 4 + ... + n &lt; 2n calls. Depth log n |
+| 13 | O(n log n) | O(n) | T(n) = 2T(n/2) + O(n) (slicing and concatenation at every level). Live slices along the current path total &lt; 2n |
+| 14 | O(n) | O(n) | T(n) = T(n/2) + O(n): n + n/2 + ... &lt; 2n. The slicing ruined the binary search. Fix with indices: O(log n) time, O(log n) stack (O(1) iterative) |
+| 15 | O(n) | O(1) | n + n/2 + n/4 + ... &lt; 2n |
+| 16 | O(√n) | O(1) | Stops when i > √n |
+| 17 | O(n · L log L) | O(n · L) | Sorting each word costs L log L. Storing the keys and groups is n · L |
+| 18 | O(m · n) | O(m · n) | Each (r, c) is computed once with O(1) work. The cache holds m · n entries; the stack depth is up to m + n |
+| 18b | O(2^(m+n)) | O(m + n) | Without the cache, every call branches twice and the depth is up to m + n. (Tighter: it's proportional to the answer itself, C(m+n−2, m−1), but O(2^(m+n)) is an acceptable upper bound.) |
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-recursion-trees" title="D5. Recursion trees by hand (30 min)">
+
 On paper, draw the recursion tree for each, write the work per level, and sum it:
 1. `fib(6)` (naive). Count the total calls. (Hint: the number of calls satisfies C(n) = C(n−1) + C(n−2) + 1.)
 2. `merge_sort` on 8 elements: label each level with its total work.
@@ -871,7 +1134,19 @@ On paper, draw the recursion tree for each, write the work per level, and sum it
    ```
 4. Tower of Hanoi: `hanoi(n)` moves n−1 disks, moves one disk, then moves n−1 disks again. Write the recurrence and solve it. How many moves for n = 20?
 
-**D6. Constraints → target complexity (20 min)**
+<Answer>
+
+1. **`fib(6)`:** C(0) = C(1) = 1, C(2) = 3, C(3) = 5, C(4) = 9, C(5) = 15, **C(6) = 25 calls**. The call count grows like φⁿ, which is O(2ⁿ) as an upper bound.
+2. **Merge sort, n = 8:** level 0 does 8 work, level 1 does 4 + 4 = 8, level 2 does 2 + 2 + 2 + 2 = 8, and level 3 is 8 leaves of size 1. That's log₂ 8 = 3 levels of merging at 8 each: **24**, which matches n log₂ n = 8 × 3. O(n log n).
+3. **`g(n)`:** n + n/2 + n/4 + ... + 1 &lt; 2n → **O(n) time**, with a recursion depth of log n → **O(log n) space**. (One branch per call, so the halving work forms a geometric series.)
+4. **Hanoi:** T(n) = 2T(n−1) + 1, with T(1) = 1, gives **T(n) = 2ⁿ − 1**. For n = 20, that's **1,048,575 moves**. O(2ⁿ).
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-constraints-target" title="D6. Constraints → target complexity (20 min)">
+
 For each, state the target complexity and the technique it hints at:
 1. `1 <= nums.length <= 10^5`. Return true if any two numbers sum to `target`.
 2. `1 <= nums.length <= 15`. Return all subsets whose sum is divisible by 3.
@@ -882,7 +1157,23 @@ For each, state the target complexity and the technique it hints at:
 7. `1 <= nums.length <= 10^5`, `0 <= nums[i] <= 100`. Return nums sorted.
 8. An array of `n <= 5 * 10^4` integers, and `q <= 5 * 10^4` queries `sum(nums[l..r])`. The array never changes.
 
-**D7. Simulate N+1 (30 min)**
+<Answer>
+
+1. **O(n) or O(n log n).** A hash set (O(n)), or sort plus two pointers (O(n log n)). O(n²) = 10¹⁰ is too slow.
+2. **O(n · 2ⁿ).** 2¹⁵ = 32,768 subsets × 15 is about 5 × 10⁵. Use backtracking or bitmask enumeration.
+3. **O(n · m) = 10⁶.** 2D dynamic programming.
+4. **O(log n).** Binary search on the answer in [0, n], about 30 steps. (Or Newton's method.) You can't loop to 10⁹ in Python.
+5. **O(n log V)**, with V = 10⁹. That's **binary search on the answer** over speeds 1..max(piles), about 30 iterations × 10⁴ = 3 × 10⁵.
+6. **O(n · n!).** 8! = 40,320, × 8 is about 3 × 10⁵. Backtracking is fine.
+7. **O(n + k)**, with k = 101. A **counting sort** beats O(n log n), because the values are tiny.
+8. **O(n + q)** with **prefix sums**: precompute once in O(n), then answer each query in O(1). Brute force is O(n · q) = 2.5 × 10⁹, which is too slow.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d7-simulate-n-plus-one" title="D7. Simulate N+1 (30 min)">
+
 ```python
 import time
 
@@ -902,9 +1193,23 @@ def query_users(uids: list[int]) -> list[dict]:
 3. Write a third version that's batched but joins with `next(u for u in users if u["id"] == o["user_id"])` instead of a dict. What's its CPU complexity? At what scale would it start to matter compared with the round trips?
 4. In one sentence each: what is n, and what operation are you counting, for each version?
 
+<Answer>
+
+1–2. Naive: about `k × 2 ms`. That's ~100 ms for 50, ~200 ms for 100, ~400 ms for 200, and ~800 ms for 400 (plus sleep overhead, which is usually slightly more). Batched: about 2 ms flat, whatever k is.
+
+3. The batched version with the `next(...)` scan is **O(k · u)** CPU, where k is the number of orders and u is the number of unique users (≤ 300 here): 400 × 300 = 1.2 × 10⁵ comparisons, which takes a few milliseconds in Python. That's already comparable to the round trip. With 10⁴ orders and 10⁴ users it would be 10⁸ comparisons, about 10 seconds, so the in-memory join would dominate completely. The dict join is O(k + u).
+
+4. **Naive:** n = the number of orders, counting **round trips**, so O(n). **Batched with a dict:** O(1) round trips and O(n + u) CPU. **Batched with a scan:** O(1) round trips, but O(n · u) CPU. You fixed the network and reintroduced a nested-loop join in memory.
+
+</Answer>
+
+</Drill>
+
 ---
 
 ## 4. Build: `bigo_lab`, an empirical complexity checker (2–2.5 hrs)
+
+<Build id="bigo-lab" title="bigo_lab: an empirical complexity checker">
 
 Build a small tool that **measures** how a function scales and **guesses its Big-O class**. Then use it to verify the cost table from Module 00 against reality. You'll trust the table more once you've confirmed it yourself, and you'll get a feel for how noisy real measurements are.
 
@@ -982,127 +1287,274 @@ At the top of `bigo_lab.py`, write a short comment block answering:
 
 Commit it. You'll reuse `measure()` in later modules to check your own data structures.
 
+**Acceptance**
+
+- [ ] `drills/01/bigo_lab.py` exists with `measure(fn, make_input, sizes, repeat=5)`
+- [ ] `measure()` builds the input outside the timed region and rebuilds or copies it for every repeat when `fn` mutates it
+- [ ] Timing uses `time.perf_counter()` and keeps the minimum of the repeats
+- [ ] GC is disabled during timing and re-enabled in a `try/finally`
+- [ ] `estimate()` picks the model from `MODELS` whose `t / f(n)` ratios have the smallest spread
+- [ ] All 12 experiments in the table are implemented, each with its expected complexity
+- [ ] The script prints an experiment / expected / estimated / match report
+- [ ] `tests/test_bigo_lab.py` tests `estimate()` on synthetic data for every model, and passes
+- [ ] A comment block at the top of `bigo_lab.py` answers the three write-up questions (mismatches, clean ranges of n, what `sort_sorted` says about Timsort)
+- [ ] Committed to your `dsa-journey` repo
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-sliding-window" type="complexity" time="O(n)" space="O(1)">
+
+What are the time and auxiliary space of this function? `nums` holds non-negative integers.
+
+```python
+def longest_under(nums, limit):
+    left = total = best = 0
+    for right in range(len(nums)):
+        total += nums[right]
+        while total > limit:
+            total -= nums[left]
+            left += 1
+        best = max(best, right - left + 1)
+    return best
+```
+
+<Why>`left` only moves forward and never resets, so the inner `while` runs at most n times across the whole run: n + n = O(n). Only a few variables, so O(1) space. See Rule 7 in [2.8](#28-analyzing-iterative-code).</Why>
+
+</Quiz>
+
+<Quiz id="q-slicing-palindrome" type="complexity" time="O(n²)" space="O(n²)">
+
+What are the time and auxiliary space of this recursive palindrome check, with n = `len(s)`?
+
+```python
+def is_pal(s):
+    if len(s) < 2:
+        return True
+    return s[0] == s[-1] and is_pal(s[1:-1])
+```
+
+<Why>Each call copies a slice of size n − 2, n − 4, ...: O(n²) total copying. Every frame's slice stays alive until it returns, so the stack holds about n²/4 characters at once: O(n²) space. Pass indices instead. See Trap 4 in [2.11](#211-pythons-built-in-costs-and-the-traps).</Why>
+
+</Quiz>
+
+<Quiz id="q-fib-calls" type="output" answer="15">
+
+What does this print?
+
+```python
+calls = 0
+
+def fib(n):
+    global calls
+    calls += 1
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+fib(5)
+print(calls)
+```
+
+<Why>The recursion tree for `fib(5)` has 15 nodes (C(n) = C(n−1) + C(n−2) + 1, with C(0) = C(1) = 1). See Example D in [2.10](#210-analyzing-recursive-code-recursion-trees).</Why>
+
+</Quiz>
+
+<Quiz id="q-hidden-quadratic" type="bug" line="5">
+
+This function is meant to return the elements that appear exactly once, in O(n) time. It's correct but O(n²). Click the line that makes it quadratic.
+
+```python
+def unique_once(nums):
+    counts = {}
+    for x in nums:
+        counts[x] = counts.get(x, 0) + 1
+    return [x for x in nums if nums.count(x) == 1]
+```
+
+<Why>`nums.count(x)` is an O(n) scan, called n times. It should use the `counts` dict it already built: `counts[x] == 1`. See [2.11](#211-pythons-built-in-costs-and-the-traps).</Why>
+
+</Quiz>
+
+<Quiz id="q-amortized-guarantee" type="mcq" answer="c">
+
+Which statement about amortized O(1) `list.append` is true?
+
+<Choice id="a">Every single append is O(1)</Choice>
+<Choice id="b">It's O(1) on average only if the appended values are random</Choice>
+<Choice id="c">Any sequence of n appends costs O(n) in total, but one individual append can cost O(n)</Choice>
+<Choice id="d">It would still be amortized O(1) if capacity grew by a fixed +100 slots</Choice>
+
+<Why>Amortized is a deterministic guarantee over a sequence, not over random inputs. A resize still copies everything (the latency spike Redis avoids by rehashing incrementally), and additive growth gives O(n) per append. See [2.6](#26-amortized-analysis-why-listappend-is-o1).</Why>
+
+</Quiz>
+
+<Quiz id="q-hidden-on-ops" type="multi" answer="a,b,e">
+
+Which of these are O(n) per call on a Python list or string of size n?
+
+<Choice id="a">`x in lst`</Choice>
+<Choice id="b">`lst.pop(0)`</Choice>
+<Choice id="c">`lst.append(x)`</Choice>
+<Choice id="d">`d[key]` on a dict</Choice>
+<Choice id="e">`s[1:]`</Choice>
+
+<Why>`in` on a list scans, `pop(0)` shifts every element, and slicing copies. `append` is amortized O(1) and dict lookup is O(1) average. See [2.11](#211-pythons-built-in-costs-and-the-traps).</Why>
+
+</Quiz>
+
+<Quiz id="q-constraint-1e5" type="mcq" answer="b">
+
+A problem says `1 <= nums.length <= 10^5`. What should you aim for?
+
+<Choice id="a">O(n²) is fine: 10⁵ is small</Choice>
+<Choice id="b">O(n log n) or O(n)</Choice>
+<Choice id="c">O(log n): you can't afford to read the input</Choice>
+<Choice id="d">O(2ⁿ) backtracking</Choice>
+
+<Why>O(n²) would be 10¹⁰ steps, far over the ~10⁷–10⁸ budget. n ≤ 10⁵ points to sorting, hashing, two pointers, sliding window or prefix sums. See [2.12](#212-reading-the-constraints-what-complexity-do-you-need).</Why>
+
+</Quiz>
+
+<Quiz id="q-order-ladder" type="order" answer="const,log,sqrt,lin,nlogn,quad,exp,fact">
+
+Order these from slowest-growing to fastest-growing.
+
+<Step id="const">O(1)</Step>
+<Step id="log">O(log n)</Step>
+<Step id="sqrt">O(√n)</Step>
+<Step id="lin">O(n)</Step>
+<Step id="nlogn">O(n log n)</Step>
+<Step id="quad">O(n²)</Step>
+<Step id="exp">O(2ⁿ)</Step>
+<Step id="fact">O(n!)</Step>
+
+<Why>1 &lt; log n &lt; √n &lt; n &lt; n log n &lt; n² &lt; n³ &lt; 2ⁿ &lt; n!. See [2.4](#24-the-complexity-ladder).</Why>
+
+</Quiz>
+
+<Quiz id="q-deque-fix" type="blank" answer="popleft">
+
+Fill in the blank so this BFS dequeues in O(1) instead of O(n).
+
+```python
+from collections import deque
+
+queue = deque([start])
+while queue:
+    node = queue.___()
+    visit(node)
+```
+
+<Why>`deque.popleft()` is O(1); `list.pop(0)` shifts every element, turning BFS into O(n²). See Trap 2 in [2.11](#211-pythons-built-in-costs-and-the-traps).</Why>
+
+</Quiz>
+
+<Quiz id="q-explain-n-plus-one" type="explain">
+
+An endpoint loads 500 orders, then runs one `SELECT` per order to fetch its user. Explain its cost in Big-O terms, and how you'd fix it without introducing a new O(n · m) problem.
+
+<Model>
+
+It's N+1 queries: 1 + n round trips, O(n) in the operation that dominates (network hops, ~1 ms each, so ~500 ms of waiting). Fix: collect the unique user ids, fetch them in one `WHERE id = ANY(...)` query (O(1) round trips), then build a hash map by id and look each order up: an O(n + u) hash join. Joining with a linear `find` per order instead would be an in-memory nested-loop join, O(n · u).
+
+</Model>
+
+<Why>See [2.13](#213-complexity-on-the-backend).</Why>
+
+</Quiz>
+
 ---
 
 ## 5. Checkpoint
 
 Answer these out loud, without notes. If you get stuck on one, re-read that section.
 
-1. Explain Big-O to a junior developer in two sentences, then give the formal definition. What do Ω and Θ mean, and which one do people actually mean when they say "Big-O"?
-2. Why do we drop constants and lower-order terms? Give a real situation where the constant matters more than the growth rate.
-3. What are the average and worst cases for hash map lookup and for quicksort, and what causes the worst case in each? Which do you state in an interview?
-4. Prove that `list.append` is O(1) amortized using the doubling argument. How is amortized different from average? Why might it still cause a latency spike in a request handler, and how does Redis avoid that?
-5. What counts toward space complexity? What's the space complexity of recursive DFS on a balanced tree versus a skewed one?
-6. A sliding-window function has a `while` loop inside a `for` loop. Why can it still be O(n)?
-7. Draw (in the air) the recursion trees for naive Fibonacci and merge sort. Derive both complexities. What does memoization do to Fibonacci, and why?
-8. Name five Python operations that look cheap but are O(n), and the fix for each.
-9. A problem says `n <= 10^5`. What complexity are you aiming for, and why? What about `n <= 20`? What about values up to `10^9` where you're asked for a "minimum capacity"?
-10. Explain N+1 queries, a full table scan versus an index lookup, and a hash join versus a nested-loop join, in Big-O terms. Which DSA problem is a hash join?
+<Checkpoint>
+
+<Ask id="cp-explain-big-o" q="Explain Big-O to a junior developer in two sentences, then give the formal definition. What do Ω and Θ mean, and which one do people actually mean when they say Big-O?" section="22-the-formal-definitions">
+
+Big-O describes how an algorithm's cost grows as the input grows, ignoring constants. It's an upper bound: past some size, cost grows no faster than g. Formally, f(n) = O(g(n)) if there are c > 0 and n₀ with f(n) ≤ c · g(n) for all n ≥ n₀. Ω is a lower bound, Θ a tight bound (both); people mean the tightest bound, effectively Θ.
+
+</Ask>
+
+<Ask id="cp-drop-constants" q="Why do we drop constants and lower-order terms? Give a real situation where the constant matters more than the growth rate." section="23-simplification-rules">
+
+Constants depend on hardware and language, and lower-order terms vanish at large n; growth is what decides scalability. But an O(1) 50 ms network call loses to an in-memory O(log n) lookup, and at small n (say under 50) insertion sort beats merge sort, which is why Timsort uses it on small runs.
+
+</Ask>
+
+<Ask id="cp-average-worst" q="What are the average and worst cases for hash map lookup and for quicksort, and what causes the worst case in each? Which do you state in an interview?" section="25-best-worst-and-average-case">
+
+Hash map: O(1) average, O(n) worst when many keys collide (e.g., hash flooding). Quicksort: O(n log n) average, O(n²) worst with bad pivots (0 / n−1 splits). Say "O(1) on average" for hash maps and give both for quicksort.
+
+</Ask>
+
+<Ask id="cp-amortized" q="Prove that list.append is O(1) amortized using the doubling argument. How is amortized different from average? Why might it still cause a latency spike in a request handler, and how does Redis avoid that?" section="26-amortized-analysis-why-listappend-is-o1">
+
+With doubling, n appends do n writes plus copies of 1 + 2 + 4 + ... &lt; 2n, so under 3n total: under 3 per append. Amortized is a guarantee over any sequence; average is over random inputs. A single resize is still O(n), so the request that triggers it spikes; Redis rehashes incrementally, moving a few buckets per operation.
+
+</Ask>
+
+<Ask id="cp-space" q="What counts toward space complexity? What's the space complexity of recursive DFS on a balanced tree versus a skewed one?" section="27-time-vs-space">
+
+Auxiliary memory beyond the input, including the recursion stack; the output usually isn't counted. DFS space is O(h): O(log n) on a balanced tree, O(n) on a skewed one.
+
+</Ask>
+
+<Ask id="cp-sliding-window" q="A sliding-window function has a while loop inside a for loop. Why can it still be O(n)?" section="28-analyzing-iterative-code">
+
+The inner pointer only moves forward and never resets, so across the whole run it moves at most n times. Total work is n for the outer pointer plus n for the inner: O(n).
+
+</Ask>
+
+<Ask id="cp-recursion-trees" q="Draw (in the air) the recursion trees for naive Fibonacci and merge sort. Derive both complexities. What does memoization do to Fibonacci, and why?" section="210-analyzing-recursive-code-recursion-trees">
+
+Fibonacci: 2 branches, depth n → up to 2ⁿ calls, O(2ⁿ) time, O(n) stack. Merge sort: log n levels, each doing O(n) merge work → O(n log n) time, O(n) space. Memoization computes each fib(k) once: O(n) time and space, because the tree's repeated subproblems collapse.
+
+</Ask>
+
+<Ask id="cp-python-traps" q="Name five Python operations that look cheap but are O(n), and the fix for each." section="211-pythons-built-in-costs-and-the-traps">
+
+`x in list` → build a set once; `list.pop(0)` / `insert(0, x)` → `deque`; `s = c + s` → collect parts and `"".join`; `nums[i:]` in a loop or recursion → pass indices; `sum(nums[:i])` → running total; `res = res + [x]` → `append`.
+
+</Ask>
+
+<Ask id="cp-constraints" q="A problem says n <= 10^5. What complexity are you aiming for, and why? What about n <= 20? What about values up to 10^9 where you're asked for a minimum capacity?" section="212-reading-the-constraints-what-complexity-do-you-need">
+
+n ≤ 10⁵: O(n log n) or O(n), since O(n²) = 10¹⁰ is too slow. n ≤ 20: O(2ⁿ) / O(n · 2ⁿ), subsets or bitmask. Values up to 10⁹ with "minimum capacity": binary search on the answer, O(n log 10⁹).
+
+</Ask>
+
+<Ask id="cp-backend" q="Explain N+1 queries, a full table scan versus an index lookup, and a hash join versus a nested-loop join, in Big-O terms. Which DSA problem is a hash join?" section="213-complexity-on-the-backend">
+
+N+1 is O(n) round trips; batching makes it O(1). A full scan is O(n), a B-tree index lookup O(log n). A nested-loop join is O(n · m), a hash join O(n + m): build a map of one side and probe with the other, which is Two Sum.
+
+</Ask>
+
+</Checkpoint>
 
 ---
 
 ## 6. Resources
 
 **Required**
-- *Grokking Algorithms* (2nd ed.), Chapter 1: binary search and Big-O, with the best visual intuition for log n anywhere
-- *Cracking the Coding Interview* (Gayle Laakmann McDowell), Chapter VI "Big O": the best interview-focused treatment, with a dozen worked examples (amortized time, recursive runtimes, "drop the non-dominant terms"). If you only read one thing besides this module, read this.
+
+<Resource href="https://www.manning.com/books/grokking-algorithms-second-edition" type="book" time="1h" required>Grokking Algorithms (2nd ed.), Chapter 1</Resource>
+
+Binary search and Big-O, with the best visual intuition for log n anywhere.
+
+<Resource href="https://www.crackingthecodinginterview.com/" type="book" time="2h" required>Cracking the Coding Interview (Gayle Laakmann McDowell), Chapter VI "Big O"</Resource>
+
+The best interview-focused treatment, with a dozen worked examples (amortized time, recursive runtimes, "drop the non-dominant terms"). If you only read one thing besides this module, read this.
 
 **Recommended**
-- [Python wiki: TimeComplexity](https://wiki.python.org/moin/TimeComplexity), which you should already have bookmarked from Module 00
-- MIT 6.006 *Introduction to Algorithms* (OCW, Spring 2020), Lectures 1–2, if you want the rigorous version, with the formal model of computation and dynamic array analysis
 
----
+<Resource href="https://wiki.python.org/moin/TimeComplexity" type="docs" time="15m">Python wiki: TimeComplexity</Resource>
 
-## Answer key
+You should already have this bookmarked from Module 00.
 
-Don't open these until you've committed to your answers.
+<Resource href="https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/" type="course" time="2h">MIT 6.006 Introduction to Algorithms (OCW, Spring 2020), Lectures 1–2</Resource>
 
-<details>
-<summary>D1: expected ratios when n doubles</summary>
-
-| Function | Expected ratio | Notes |
-|---|---|---|
-| `constant` | ~1.0 | Very noisy: the times are microseconds, close to timer resolution |
-| `logarithmic` | ~1.0 (very slightly above) | log₂(2n) / log₂(n) is about 1.05–1.1 at these sizes. It's indistinguishable from O(1) by timing alone |
-| `linear` | ~2.0 | Usually the cleanest result |
-| `linearithmic` | ~2.1–2.2 in theory | In practice anywhere from ~1.8 to ~2.7, because cache effects at larger n add noise. Hard to tell apart from linear |
-| `quadratic` | ~4.0 | Very clear |
-
-The lesson: timing confirms the *big* differences (1 vs n vs n²) easily, but log factors are almost invisible. You need analysis, not just measurement.
-</details>
-
-<details>
-<summary>D2: amortized append</summary>
-
-1. Capacities go 4, 8, 16, 24, 32, 40, 52, 64, 76, 92, 108, ... The growth factor tends toward about **1.125** (12.5% plus a small constant).
-2. For 10⁶ appends on CPython 3.12: about **86 resizes** and about **8.4 copies per append**. It's a constant, and close to r/(r − 1) = 1.125/0.125 = 9. That's O(1) amortized.
-3. With +100 growth, the copies per append grow **linearly with n** (about n/200): roughly 5 at n = 10³, 50 at n = 10⁴, and 500 at n = 10⁵. That's O(n) amortized per append, or O(n²) total. Additive growth fails.
-</details>
-
-<details>
-<summary>D3: Fix the traps</summary>
-
-1. **O(n · m) → O(n + m).** `b_set = set(b)`, then `[x for x in a if x in b_set]`.
-2. **O(n²) → O(n).** Use `deque([0])` and `popleft()`. The rest is unchanged.
-3. **O(n² · L) → O(n · L)**, where L is the line length. Collect `parts`, then `"\n".join(reversed(parts)) + "\n"` (or iterate `reversed(lines)`). Bonus: `out += ...` (appending) is often fast in CPython because of the in-place resize optimization, but that's an implementation detail. In an interview, use `join` and say why.
-4. **O(n²) → O(n).** Keep a running total: `total += x; out.append(total)` (or `itertools.accumulate(nums)`).
-5. **O(n²) → O(n).** Keep a `seen` set alongside `out`: `if x not in seen: seen.add(x); out.append(x)`. (Or `list(dict.fromkeys(nums))`, which works because dicts keep insertion order.)
-</details>
-
-<details>
-<summary>D4: Predict the complexity</summary>
-
-| # | Time | Aux. space | Why |
-|---|---|---|---|
-| 1 | O(n) | O(1) | Two sequential loops: n + n |
-| 2 | O(n²) | O(1) | All pairs: n(n−1)/2 |
-| 3 | O(log n) | O(1) | i triples each step: log₃ n steps (bases don't matter) |
-| 4 | O(n log n) | O(1) | n outer iterations × log₂ n inner |
-| 5 | O(n · m) | O(n · m) | Every pair is materialized in the output (O(1) aux if you don't count the output) |
-| 6 | O(n) | O(1) | The inner loop is a constant 4 |
-| 7 | O(n) | O(1) | `left` only moves forward, at most n times in total (Rule 7) |
-| 8 | O(n log n) | O(1) | n/1 + n/2 + ... + n/n = n · Hₙ ≈ n ln n (harmonic) |
-| 9 | O(n²) | O(n) | Prepending copies the whole string each time: 1 + 2 + ... + n |
-| 10 | O(n²) | O(n) | `count` is O(n), called n times. The output can be up to n |
-| 11 | O(2ⁿ) | O(n) | Two branches, depth n: 2ⁿ calls. The stack is n deep |
-| 12 | O(n) | O(log n) | T(n) = 2T(n/2) + O(1): 1 + 2 + 4 + ... + n < 2n calls. Depth log n |
-| 13 | O(n log n) | O(n) | T(n) = 2T(n/2) + O(n) (slicing and concatenation at every level). Live slices along the current path total < 2n |
-| 14 | O(n) | O(n) | T(n) = T(n/2) + O(n): n + n/2 + ... < 2n. The slicing ruined the binary search. Fix with indices: O(log n) time, O(log n) stack (O(1) iterative) |
-| 15 | O(n) | O(1) | n + n/2 + n/4 + ... < 2n |
-| 16 | O(√n) | O(1) | Stops when i > √n |
-| 17 | O(n · L log L) | O(n · L) | Sorting each word costs L log L. Storing the keys and groups is n · L |
-| 18 | O(m · n) | O(m · n) | Each (r, c) is computed once with O(1) work. The cache holds m · n entries; the stack depth is up to m + n |
-| 18b | O(2^(m+n)) | O(m + n) | Without the cache, every call branches twice and the depth is up to m + n. (Tighter: it's proportional to the answer itself, C(m+n−2, m−1), but O(2^(m+n)) is an acceptable upper bound.) |
-</details>
-
-<details>
-<summary>D5: Recursion trees</summary>
-
-1. **`fib(6)`:** C(0) = C(1) = 1, C(2) = 3, C(3) = 5, C(4) = 9, C(5) = 15, **C(6) = 25 calls**. The call count grows like φⁿ, which is O(2ⁿ) as an upper bound.
-2. **Merge sort, n = 8:** level 0 does 8 work, level 1 does 4 + 4 = 8, level 2 does 2 + 2 + 2 + 2 = 8, and level 3 is 8 leaves of size 1. That's log₂ 8 = 3 levels of merging at 8 each: **24**, which matches n log₂ n = 8 × 3. O(n log n).
-3. **`g(n)`:** n + n/2 + n/4 + ... + 1 < 2n → **O(n) time**, with a recursion depth of log n → **O(log n) space**. (One branch per call, so the halving work forms a geometric series.)
-4. **Hanoi:** T(n) = 2T(n−1) + 1, with T(1) = 1, gives **T(n) = 2ⁿ − 1**. For n = 20, that's **1,048,575 moves**. O(2ⁿ).
-</details>
-
-<details>
-<summary>D6: Constraints → target complexity</summary>
-
-1. **O(n) or O(n log n).** A hash set (O(n)), or sort plus two pointers (O(n log n)). O(n²) = 10¹⁰ is too slow.
-2. **O(n · 2ⁿ).** 2¹⁵ = 32,768 subsets × 15 is about 5 × 10⁵. Use backtracking or bitmask enumeration.
-3. **O(n · m) = 10⁶.** 2D dynamic programming.
-4. **O(log n).** Binary search on the answer in [0, n], about 30 steps. (Or Newton's method.) You can't loop to 10⁹ in Python.
-5. **O(n log V)**, with V = 10⁹. That's **binary search on the answer** over speeds 1..max(piles), about 30 iterations × 10⁴ = 3 × 10⁵.
-6. **O(n · n!).** 8! = 40,320, × 8 is about 3 × 10⁵. Backtracking is fine.
-7. **O(n + k)**, with k = 101. A **counting sort** beats O(n log n), because the values are tiny.
-8. **O(n + q)** with **prefix sums**: precompute once in O(n), then answer each query in O(1). Brute force is O(n · q) = 2.5 × 10⁹, which is too slow.
-</details>
-
-<details>
-<summary>D7: Simulated N+1</summary>
-
-1–2. Naive: about `k × 2 ms`. That's ~100 ms for 50, ~200 ms for 100, ~400 ms for 200, and ~800 ms for 400 (plus sleep overhead, which is usually slightly more). Batched: about 2 ms flat, whatever k is.
-
-3. The batched version with the `next(...)` scan is **O(k · u)** CPU, where k is the number of orders and u is the number of unique users (≤ 300 here): 400 × 300 = 1.2 × 10⁵ comparisons, which takes a few milliseconds in Python. That's already comparable to the round trip. With 10⁴ orders and 10⁴ users it would be 10⁸ comparisons, about 10 seconds, so the in-memory join would dominate completely. The dict join is O(k + u).
-
-4. **Naive:** n = the number of orders, counting **round trips**, so O(n). **Batched with a dict:** O(1) round trips and O(n + u) CPU. **Batched with a scan:** O(1) round trips, but O(n · u) CPU. You fixed the network and reintroduced a nested-loop join in memory.
-</details>
+If you want the rigorous version, with the formal model of computation and dynamic array analysis.

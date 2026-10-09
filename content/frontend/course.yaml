@@ -1,0 +1,153 @@
+title: "Frontend Mastery: Backend Engineer → Frontend Specialist"
+type: course
+summary: Learn the browser, CSS, and design taste first, then React, Next.js, and production frontend, ending at specialist level.
+hoursPerWeek: 12
+labels: { part: Phase, unit: Module }
+overview: overview.mdx
+timeline:
+  - month: 2
+    expect: Build any static design you're given, responsive and accessible, with no framework. Milestone 1 (product site + interactive dashboard) is in your portfolio.
+  - month: 4
+    expect: Build real full-stack React apps against your own Express backends, with server state, typed forms, and tests. Milestone 2 (project management app) is shipped.
+  - month: 6
+    expect: Ship fast, accessible, production-grade Next.js apps. Milestone 3 is deployed and scores 95+ on Lighthouse.
+  - month: 7
+    expect: Think like a staff-level frontend engineer. Debug browser internals, lead architecture decisions, pass senior frontend interviews, and ship the real-time capstone.
+parts:
+  - id: phase-1-platform
+    title: The Platform
+    goal: Build any static design you're given, responsive and accessible, with no framework.
+    units:
+      - id: "01"
+        title: How the Browser Works + Semantic HTML
+        weeks: 1
+        outcome: You know what happens between URL and pixels, and you write HTML that means something
+        file: phase-1-platform/01-browser-and-html.mdx
+        skills: [browser-rendering, html, accessibility]
+      - id: "02"
+        title: "CSS Fundamentals: cascade, specificity, box model, units"
+        weeks: 1.5
+        outcome: You can predict which style wins and why an element has the size it does
+        skills: [css-cascade, css-box-model]
+      - id: "03"
+        title: "Layout: flow, Flexbox, Grid, positioning, responsive"
+        weeks: 2
+        outcome: You can lay out any design. No more guessing
+        skills: [css-layout, flexbox, grid, responsive]
+      - id: "04"
+        title: "Professional Styling: design rules, tokens, typography, color, modern CSS"
+        weeks: 1.5
+        outcome: Your UIs stop looking "developer-made"
+        skills: [design, typography, color, css-modern]
+      - id: "05"
+        title: DOM, Events, Browser APIs, Forms (vanilla TS)
+        weeks: 1.5
+        outcome: You can build interactive UI without a framework and know what React abstracts away
+        skills: [dom, events, browser-apis, forms]
+      - id: milestone-1
+        kind: milestone
+        title: "Milestone 1: Multi-page product site + interactive dashboard from a real design file"
+        weeks: 0.5
+        outcome: "Portfolio piece #1"
+  - id: phase-2-react
+    title: React, Properly
+    goal: Build real full-stack apps against your own Express backends.
+    units:
+      - id: "06"
+        title: "React mental model: components, rendering, reconciliation, keys"
+        weeks: 1
+        outcome: You know when and why React re-renders
+        skills: [react-rendering]
+      - id: "07"
+        title: "Hooks in depth: state, effects (and when not to use them), refs, context, custom hooks"
+        weeks: 1.5
+        outcome: No more useEffect spaghetti
+        skills: [react-hooks]
+      - id: "08"
+        title: "Styling at scale: CSS Modules, Tailwind, headless UI (Radix), building a component library"
+        weeks: 1.5
+        outcome: You can ship your own design system
+        skills: [css-modules, tailwind, design-systems]
+      - id: "09"
+        title: "Server state & client state: TanStack Query, caching, optimistic UI, Zustand, URL state"
+        weeks: 1.5
+        outcome: Data-heavy UIs feel easy
+        skills: [server-state, client-state]
+      - id: "10"
+        title: Routing, forms & validation (React Hook Form + Zod schemas shared with your backend)
+        weeks: 1
+        outcome: Complex forms, with types end to end
+        skills: [routing, forms, validation]
+      - id: "11"
+        title: "Testing: Vitest, Testing Library, MSW, Playwright"
+        weeks: 1
+        outcome: You test UIs with the same confidence as APIs
+        skills: [testing]
+      - id: milestone-2
+        kind: milestone
+        title: "Milestone 2: Full-stack project management app (React + your Express API)"
+        weeks: 0.5
+        outcome: "Portfolio piece #2"
+  - id: phase-3-production
+    title: Production Frontend
+    goal: Ship fast, accessible, production-grade apps.
+    units:
+      - id: "12"
+        title: "Tooling: Vite, bundlers, ESM, linting, monorepos, CI"
+        weeks: 0.5
+        outcome: You understand your build, not just run it
+        skills: [tooling, bundlers]
+      - id: "13"
+        title: "Next.js & rendering strategies: CSR/SSR/SSG/ISR, Server Components, streaming, Server Actions"
+        weeks: 1.5
+        outcome: You can pick the right rendering model per page
+        skills: [nextjs, rendering-strategies]
+      - id: "14"
+        title: "Performance: Core Web Vitals, critical rendering path, profiling, bundle size, images/fonts, React perf"
+        weeks: 1.5
+        outcome: You can measure a slow page and fix it
+        skills: [performance, web-vitals]
+      - id: "15"
+        title: "Accessibility in depth: WCAG 2.2, ARIA patterns, keyboard, screen-reader testing"
+        weeks: 1
+        outcome: You build UIs everyone can use (a big differentiator for specialists)
+        skills: [accessibility, aria]
+      - id: "16"
+        title: "Motion & interaction polish: transitions, Motion library, View Transitions API"
+        weeks: 1
+        outcome: Your UIs feel premium
+        skills: [animation, motion]
+      - id: milestone-3
+        kind: milestone
+        title: "Milestone 3: Deployed Next.js SaaS-style app scoring 95+ on Lighthouse"
+        weeks: 1
+        outcome: "Portfolio piece #3"
+  - id: phase-4-specialist
+    title: Specialist Level
+    goal: Think like a staff-level frontend engineer.
+    units:
+      - id: "17"
+        title: "Browser internals deep dive: event loop, rendering pipeline, compositor, memory leaks"
+        weeks: 1
+        outcome: You debug problems others can't
+        skills: [browser-internals, event-loop, browser-rendering]
+      - id: "18"
+        title: "Frontend architecture: state architecture, design systems at scale, micro-frontends, error handling, observability"
+        weeks: 1
+        outcome: You can lead frontend architecture decisions
+        skills: [architecture, design-systems]
+      - id: "19"
+        title: "Frontend security & advanced APIs: XSS, CSP, auth in the browser, WebSockets, Web Workers, PWA/offline, i18n"
+        weeks: 1
+        outcome: Real-time, offline-ready, secure apps
+        skills: [security, websockets, web-workers, pwa, i18n]
+      - id: "20"
+        title: Frontend system design + UI machine coding (interview prep)
+        weeks: 1.5
+        outcome: You pass senior frontend interviews
+        skills: [system-design, machine-coding]
+      - id: capstone
+        kind: milestone
+        title: "Capstone: Real-time collaborative app (e.g., Notion-lite or a Trello board with live cursors) built on your own published design system"
+        weeks: 2
+        outcome: Flagship portfolio piece

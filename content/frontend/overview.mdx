@@ -1,0 +1,91 @@
+# Frontend Mastery: Backend Engineer → Frontend Specialist
+
+**Student profile:** Strong backend engineer (TypeScript, Node.js, Express). TypeScript is solid, but browser, CSS, and UI experience is close to zero. Styling is the weakest area.
+**Target:** Frontend specialist. You should be able to build pixel-accurate, accessible, fast UIs, understand how the browser renders them, and design frontend architecture at scale.
+**Pace:** 10–15 hrs/week, about **28 weeks (~6.5 months)**.
+**Main stack:** React + TypeScript, then Next.js. Styling: modern CSS first, Tailwind later.
+
+---
+
+## The core idea of this course
+
+You already think like an engineer. What you're missing is three things:
+
+1. **A model of the browser as a runtime.** You know Node's event loop and the request lifecycle. The browser has its own: parse → style → layout → paint → composite. Once you see it, CSS and performance stop feeling like magic.
+2. **CSS as a real language.** Most backend devs fail at CSS because they never learn it. They guess and add `!important`. CSS has rules: the cascade, the box model, formatting contexts, and layout algorithms. Learn the rules and it becomes predictable.
+3. **Design taste.** "Professional-looking" isn't talent. It comes from a small set of learnable rules: spacing scales, type scales, visual hierarchy, restrained color, and alignment. This is where most engineers' UIs look amateur, so it gets its own module.
+
+**We learn the platform before the framework.** React on top of shaky CSS and DOM knowledge is why so many "React devs" can't center a div or fix a layout bug. Phase 1 is deliberately vanilla.
+
+<Card id="three-missing-pieces" q="What three things does a backend engineer typically lack for frontend work?">
+
+1. A model of the browser as a runtime (parse → style → layout → paint → composite).
+2. CSS as a real language with rules (cascade, box model, formatting contexts, layout algorithms).
+3. Design taste: learnable rules for spacing, type scales, hierarchy, color, and alignment.
+
+</Card>
+
+<Card id="platform-before-framework" q="Why does this course learn the platform before the framework?">
+
+React on top of shaky CSS and DOM knowledge is why so many "React devs" can't center a div or fix a layout bug. Phase 1 is deliberately vanilla.
+
+</Card>
+
+---
+
+## How every module works
+
+Each module file has the same structure:
+
+1. **Why it matters**: the backend analogy, so you're mapping new ideas onto ones you already know.
+2. **Concepts**: the lesson itself, written to be read with an editor and browser open.
+3. **Drills**: small, focused exercises (15–45 min each). Do them all, because this is where skill comes from.
+4. **Build**: one module project that combines everything.
+5. **Checkpoint**: questions you must answer *out loud without notes* before moving on. If you can't, re-read; don't skip ahead.
+6. **Resources**: the best one or two sources per topic, not a list of twenty.
+
+### Weekly rhythm (12 hrs example)
+- **~30% learning** (reading the module, docs, short videos)
+- **~70% building** (drills and projects)
+- At least one session a week should be **"copy a real site"**: pick a well-designed site (Linear, Stripe, Vercel) and rebuild one section from scratch. It's the fastest way to build design taste.
+
+<Card id="weekly-rhythm" q="What is the learning/building split each week, and what session should happen weekly?">
+
+~30% learning, ~70% building. At least one "copy a real site" session a week: rebuild one section of a well-designed site (Linear, Stripe, Vercel) from scratch.
+
+</Card>
+
+### Rules
+- **Use DevTools constantly.** Elements, Computed, Layout (flex/grid overlays), Network, Performance. It's your debugger, the same way logs and a profiler are on the backend.
+- **No `!important`, no magic numbers, no random fixes.** If something looks wrong, find out *why* before changing it.
+- **Don't let AI write your CSS during Phase 1.** Ask it to *explain* things, but type the code yourself. Muscle memory matters here.
+- **Push everything to GitHub.** By the end you'll have a portfolio.
+
+<Card id="course-rules" q="What are the four rules of this course?">
+
+Use DevTools constantly. No `!important`, magic numbers, or random fixes (find out *why* first). Don't let AI write your CSS in Phase 1. Push everything to GitHub.
+
+</Card>
+
+---
+
+## Core resources (the short list)
+
+<Resource href="https://developer.mozilla.org" type="docs">MDN Web Docs: reference for everything</Resource>
+<Resource href="https://web.dev/learn" type="course">web.dev/learn: modern web guidance (free courses on CSS, HTML, accessibility, performance)</Resource>
+<Resource href="https://css-for-js.dev" type="course">CSS for JavaScript Developers by Josh W. Comeau (paid; the best CSS course for people like you)</Resource>
+<Resource href="https://www.youtube.com/@KevinPowell" type="video">Kevin Powell YouTube channel (free alternative for CSS, deeply)</Resource>
+<Resource href="https://www.refactoringui.com" type="book" required>Refactoring UI by Adam Wathan & Steve Schoger: the single most important book for your styling problem</Resource>
+<Resource href="https://www.frontendmentor.io" type="tool">Frontend Mentor: real designs to build (free designs with Figma files at different levels)</Resource>
+<Resource href="https://react.dev/learn" type="docs">react.dev/learn: React (the official docs are excellent)</Resource>
+<Resource href="https://www.patterns.dev" type="docs">patterns.dev: patterns</Resource>
+<Resource href="https://www.w3.org/WAI/ARIA/apg/" type="docs">WAI-ARIA Authoring Practices: accessibility</Resource>
+<Resource href="https://www.greatfrontend.com" type="course">GreatFrontEnd: interview prep (Phase 4)</Resource>
+
+---
+
+## Running in parallel: DSA
+
+The **Data Structures & Algorithms** track (Python) runs alongside this course at about 4–5 hrs/week. It lives in [the DSA course](/c/dsa).
+
+Track your progress on the [Progress page](/progress).

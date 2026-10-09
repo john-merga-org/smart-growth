@@ -47,6 +47,12 @@ python3 -i drills/00/d1.py # run a file, then drop into a REPL with its variable
 pytest -q                  # run the tests in tests/
 ```
 
+<Card id="run-then-repl" q="How do you run a Python file and then land in a REPL with its variables loaded?">
+
+`python3 -i file.py`
+
+</Card>
+
 ### 2.2 Syntax map: TypeScript → Python
 
 | TypeScript | Python | Notes |
@@ -85,6 +91,18 @@ if __name__ == "__main__":
     main()
 ```
 
+<Card id="nullish-coalesce" q="What is Python's version of x ?? y, and why is x or y not the same?">
+
+`x if x is not None else y`. `x or y` also replaces `0`, `""`, `[]` and other falsy values, not just `None`.
+
+</Card>
+
+<Card id="is-vs-eq" q="When do you use the is operator instead of == in Python?">
+
+Only for `None` (`if node is None`). `==` compares values; `is` compares identity, which is unreliable for numbers and strings.
+
+</Card>
+
 ### 2.3 Numbers: the differences that bite
 
 ```python
@@ -107,6 +125,18 @@ import math; math.isqrt(17), math.gcd(12, 18)   # (4, 6): integer square root, g
 
 **Why arbitrary precision matters for DSA:** problems that say "return the answer modulo 10^9+7" exist because answers overflow 64-bit integers in other languages. In Python they won't overflow, but you still need to apply the modulo, because the problem expects it and huge integers are slower.
 
+<Card id="floor-div-negatives" q="What do -7 // 2 and -7 % 2 return, and how do you get JS-style truncation?">
+
+`-4` and `1`: `//` floors toward −infinity and `%` takes the divisor's sign. Truncate with `int(-7 / 2)` → `-3`.
+
+</Card>
+
+<Card id="bankers-rounding" q="What does round(2.5) return in Python, and why?">
+
+`2`. Python uses banker's rounding (round half to even), so `round(3.5)` is `4`.
+
+</Card>
+
 ### 2.4 Truthiness, None, and comparisons
 
 Falsy values: `False`, `None`, `0`, `0.0`, `""`, `[]`, `{}`, `set()`, `()`. **Everything else is truthy**, including `[0]` and `"0"`.
@@ -125,6 +155,18 @@ if node is None:      # use `is` for None. Never `== None`
 [1, 2] < [1, 2, 0]    # True: a prefix is smaller
 "Zebra" < "apple"     # True: uppercase letters sort before lowercase (by code point)
 ```
+
+<Card id="falsy-values" q="Which values are falsy in Python? Is [0] falsy?">
+
+`False`, `None`, `0`, `0.0`, `""`, `[]`, `{}`, `set()`, `()`. Everything else is truthy, including `[0]` and `"0"`.
+
+</Card>
+
+<Card id="sequence-comparison" q="How do tuples and lists compare with the < operator?">
+
+Lexicographically, element by element; a prefix is smaller. `(1, 2) < (1, 3)` and `[1, 2] < [1, 2, 0]` are both `True`.
+
+</Card>
 
 ### 2.5 Lists: Python's dynamic array
 
@@ -161,6 +203,12 @@ grid = [[0] * 3 for _ in range(3)]   # RIGHT: three separate lists
 
 `[0] * 3` is safe because ints are immutable. `[[0] * 3] * 3` copies the *reference* to one list three times. It's the same bug as `Array(3).fill([])` in JS.
 
+<Card id="grid-trap" q="Why is [[0] * 3] * 3 a bug, and what is the fix?">
+
+The outer `* 3` copies a reference to ONE inner list three times, so writing a cell changes every row. Use `[[0] * 3 for _ in range(3)]`.
+
+</Card>
+
 #### Slicing: powerful, and always a copy
 
 ```python
@@ -178,6 +226,12 @@ a[1:3] = [9, 9, 9]   # slice assignment: replaces 2 elements with 3 → [0, 9, 9
 
 **Every slice creates a new list and costs O(k)** for k elements. `a[1:]` isn't a free "view". It copies n−1 elements. Inside a loop or recursion, this is a classic hidden O(n) (Module 01 covers it in depth).
 
+<Card id="slice-copies" q="What does a[i:j] cost on a list, and why?">
+
+O(j − i): every slice is a new list (a copy), not a view.
+
+</Card>
+
 #### Copies and aliasing
 
 ```python
@@ -193,6 +247,12 @@ deep = copy.deepcopy(grid)   # for nested lists. Rarely needed in DSA
 ```
 
 In backtracking (Module 14) you'll append `path[:]` (a copy) to your results, not `path`. Otherwise every result points to the same list, which ends up empty.
+
+<Card id="backtracking-copy" q="In backtracking, why append path[:] to the results instead of path?">
+
+`path` is one list that keeps being mutated (and ends up empty). `path[:]` saves a snapshot copy.
+
+</Card>
 
 ### 2.6 Comprehensions
 
@@ -218,6 +278,18 @@ total   = sum(x * x for x in nums)                  # generator expression: no l
 | `arr.flat()` | `[x for row in grid for x in row]` |
 
 Rule: if a comprehension doesn't fit on one or two lines, write a normal loop.
+
+<Card id="genexpr-memory" q="What is the difference between sum([x * x for x in nums]) and sum(x * x for x in nums)?">
+
+The first builds a full list (O(n) extra memory). The second is a generator expression: O(1) extra memory.
+
+</Card>
+
+<Card id="nested-comprehension-order" q="In [(i, j) for i in range(3) for j in range(i)], which loop is the outer one?">
+
+The first `for` (`i`). Nested comprehension clauses read in the same order as nested loops.
+
+</Card>
 
 ### 2.7 Strings
 
@@ -253,6 +325,18 @@ result = "".join(parts)       # O(total length), once
 
 (CPython often optimizes `s += c` in a loop so it isn't quadratic, but that's an implementation detail. Prepending, `s = c + s`, is always quadratic. Module 01 has the details. Use `join` and you never have to think about it.)
 
+<Card id="string-building" q="What is the right way to build a string in a loop, and why?">
+
+Append parts to a list, then `"".join(parts)` once: O(total length). Strings are immutable, so `s = c + s` copies every time (quadratic).
+
+</Card>
+
+<Card id="char-index" q="How do you map a lowercase letter c to 0..25?">
+
+`ord(c) - ord("a")`. Used for 26-slot count arrays.
+
+</Card>
+
 ### 2.8 Tuples: immutable, hashable records
 
 ```python
@@ -278,6 +362,18 @@ key = tuple(sorted(word))        # e.g., the Group Anagrams key: a sorted letter
 ```
 
 TS comparison: in a JS `Map`, the key `[1, 2]` is compared *by reference*, so `map.get([1, 2])` is always `undefined`. You'd have to stringify it (`"1,2"`). Python tuples are compared *by value*, so this just works.
+
+<Card id="tuple-hashable" q="Why can a tuple be a dict key or set member but a list can't? Give two DSA uses.">
+
+Tuples are immutable and hashable; lists are mutable and unhashable. Uses: `(row, col)` in a `visited` set for grid BFS, and `memo[(i, j)]` keys for 2D DP.
+
+</Card>
+
+<Card id="one-element-tuple" q="How do you write a one-element tuple?">
+
+`(5,)`. The trailing comma makes the tuple; `(5)` is just the int 5.
+
+</Card>
 
 ### 2.9 Dicts: hash maps
 
@@ -307,6 +403,18 @@ groups.setdefault("fruit", []).append("apple")   # get-or-insert in one step
 
 Keys must be hashable: `int`, `str`, `tuple` (of hashables), `frozenset`. Not `list`, `dict`, or `set`.
 
+<Card id="dict-get-default" q="How do you read a dict key that may be missing, without a KeyError?">
+
+`d.get(k)` returns `None`; `d.get(k, 0)` returns a default. `d[k]` raises `KeyError`.
+
+</Card>
+
+<Card id="dict-order" q="Does a Python dict keep any order?">
+
+Yes. Since Python 3.7 it keeps insertion order, like a JS `Map`.
+
+</Card>
+
 ### 2.10 Sets
 
 ```python
@@ -319,6 +427,18 @@ s = set(nums)          # dedupe: O(n)
 a, b = {1, 2, 3}, {2, 3, 4}
 a | b, a & b, a - b, a ^ b   # union, intersection, difference, symmetric difference
 ```
+
+<Card id="empty-set" q="How do you create an empty set? What is {}?">
+
+`set()`. `{}` is an empty **dict**.
+
+</Card>
+
+<Card id="discard-vs-remove" q="What is the difference between s.discard(x) and s.remove(x)?">
+
+`discard` does nothing if `x` is missing; `remove` raises `KeyError`.
+
+</Card>
 
 ### 2.11 Loops and the built-ins you'll use daily
 
@@ -347,6 +467,18 @@ else:
     print("not found")
 ```
 
+<Card id="max-empty" q="What does max([]) do, and how do you avoid it?">
+
+It raises `ValueError`. Use `max(nums, default=0)`.
+
+</Card>
+
+<Card id="for-else" q="When does the else block of a for loop run?">
+
+When the loop finishes without hitting `break`.
+
+</Card>
+
 ### 2.12 Sorting
 
 ```python
@@ -369,6 +501,18 @@ Facts you need:
 - **Numbers sort numerically.** JS sorts `[10, 9, 1]` into `[1, 10, 9]` by default because it compares strings. Python gives `[1, 9, 10]`.
 - **`x = nums.sort()` sets `x` to `None`.** It's a common bug.
 - You rarely need a custom comparator. If you do (e.g., LeetCode 179, Largest Number), use `functools.cmp_to_key(lambda a, b: ...)`, which returns a negative number, zero, or a positive number like a JS comparator.
+
+<Card id="multi-key-sort" q="How do you sort by count descending, then name ascending, in one sorted call?">
+
+Return a tuple key and negate the numeric part: `sorted(items, key=lambda kv: (-kv[1], kv[0]))`.
+
+</Card>
+
+<Card id="sort-stable-none" q="Is Python's sort stable, and what does nums.sort() return?">
+
+Stable: equal elements keep their relative order. `nums.sort()` sorts in place and returns `None` (`sorted()` returns a new list).
+
+</Card>
 
 ### 2.13 `collections`: deque, defaultdict, Counter
 
@@ -398,6 +542,12 @@ while q:
 
 Backend analogy: `deque` is an in-memory job queue, like a Redis list with `LPUSH`/`RPOP`. A `list` used as a queue (`pop(0)`) is like a queue table where every dequeue rewrites all the rows.
 
+<Card id="deque-vs-list" q="Why use deque instead of list for a queue?">
+
+`deque.popleft()` and `appendleft()` are O(1). `list.pop(0)` and `list.insert(0, x)` are O(n) because they shift every element.
+
+</Card>
+
 #### `defaultdict`: a dict with a factory for missing keys
 
 ```python
@@ -413,6 +563,12 @@ for w in words:
 
 **Gotcha:** just *reading* a missing key inserts it. `if counts["x"] == 0:` adds `"x"` to the dict. Use `"x" in counts` or `counts.get("x")` when you only want to check.
 
+<Card id="defaultdict-read-inserts" q="What is the defaultdict read gotcha?">
+
+Just reading a missing key (`d["x"]`) inserts it with the default. Check with `"x" in d` or `d.get("x")`.
+
+</Card>
+
 #### `Counter`: a multiset / frequency map
 
 ```python
@@ -427,6 +583,12 @@ c.total()                     # the sum of all counts (3.10+)
 ```
 
 `OrderedDict` also exists. It has `move_to_end()` and `popitem(last=False)`, which you'll meet with LRU caches in Module 25. Since plain dicts keep order now, you won't need it until then.
+
+<Card id="counter-missing" q="What does Counter return for a missing key, and does it insert it?">
+
+`0`, and no, it is not inserted (unlike `defaultdict`).
+
+</Card>
 
 ### 2.14 `heapq`: priority queues
 
@@ -472,6 +634,24 @@ heapq.heappush(h, (node.val, i, node))
 
 Backend analogy: this is a priority job scheduler. Think BullMQ's job priorities, or a delayed-job queue ordered by `run_at`. `heappop` always gives you the most urgent job.
 
+<Card id="max-heap" q="How do you get a max-heap with heapq?">
+
+Push negated values (`heappush(h, -x)`) and negate on the way out (`-heappop(h)`).
+
+</Card>
+
+<Card id="heap-tiebreak" q="Why push (priority, counter, item) instead of (priority, item)?">
+
+On a priority tie Python compares the next element. If `item` doesn't support `<` (e.g. a `ListNode`) you get a `TypeError`. A unique counter breaks ties first (and keeps insertion order).
+
+</Card>
+
+<Card id="heapify-cost" q="What does heapq.heapify(a) cost?">
+
+O(n), not O(n log n). `heappush`/`heappop` are O(log n), peek `h[0]` is O(1).
+
+</Card>
+
 ### 2.15 `bisect`: binary search on sorted lists
 
 ```python
@@ -489,6 +669,18 @@ bisect.bisect_left(records, 10, key=lambda r: r[0])   # key= is supported on 3.1
 ```
 
 Backend analogy: `bisect_left` on a sorted list is what a database does with a B-tree index on `WHERE ts >= ?`. It's a seek in O(log n), not a scan. You'll write your own binary search in Module 10. Until then, `bisect` is the tool.
+
+<Card id="bisect-left-right" q="For a value that appears several times in a sorted list, what do bisect_left and bisect_right return?">
+
+`bisect_left`: the index of the leftmost occurrence. `bisect_right`: the index just after the last one. Count = `bisect_right - bisect_left`.
+
+</Card>
+
+<Card id="insort-cost" q="Why is bisect.insort O(n) even though it uses binary search?">
+
+Finding the spot is O(log n), but inserting into a list shifts every later element: O(n).
+
+</Card>
 
 ### 2.16 Functions, closures, and decorators you'll use
 
@@ -527,6 +719,18 @@ fib(200)   # instant. Without @cache it would take longer than the age of the un
 
 `@cache` is literally a dict from arguments to results, like a read-through cache in front of an expensive service call. The arguments must be hashable, so pass tuples, not lists.
 
+<Card id="mutable-default" q="What goes wrong with def add(x, acc=[]), and what is the fix?">
+
+The default list is created once, at definition time, and shared by every call. Default to `None` and create the list inside.
+
+</Card>
+
+<Card id="nonlocal" q="When do you need nonlocal in a nested function?">
+
+To **reassign** an outer variable (`count += 1`). Mutating an outer list or dict doesn't need it.
+
+</Card>
+
 The pattern you'll use most on LeetCode: a nested helper that closes over the inputs.
 
 ```python
@@ -560,6 +764,18 @@ What this means for you:
 - For balanced trees (depth about log n) and backtracking (depth ≤ about 20), recursion is fine.
 
 Node comparison: V8's default stack allows roughly 10,000 frames, so you probably never hit this limit in TypeScript. In Python you will.
+
+<Card id="recursion-limit" q="What is Python's default recursion limit, and what happens past it?">
+
+About 1000 frames. Past it you get `RecursionError: maximum recursion depth exceeded`.
+
+</Card>
+
+<Card id="deep-recursion-fix" q="What is the right fix for deep recursion in Python, and why not just sys.setrecursionlimit?">
+
+Rewrite it iteratively with an explicit stack (DFS) or queue (BFS). Raising the limit doesn't add C stack, so very deep recursion can segfault with no traceback.
+
+</Card>
 
 ### 2.18 Classes for nodes
 
@@ -598,6 +814,12 @@ heapq.heappush(h, Job(2, "send-email"))
 
 **LeetCode's format:** you fill in a method on `class Solution`. Ignore the `self`. It's just how LeetCode wraps things.
 
+<Card id="dataclass-order" q="How do you make a dataclass usable in a heap, ordered by priority but not by name?">
+
+`@dataclass(order=True)` with `name: str = field(compare=False)`.
+
+</Card>
+
 ### 2.19 Type hints
 
 Hints don't change runtime behavior, but they help Pylance catch bugs and make your code read like TypeScript. Use them in your `dsalib` and in solutions.
@@ -612,6 +834,12 @@ from typing import Optional    # older style: Optional[int] means int | None (yo
 ```
 
 Use the lowercase built-ins (`list[int]`, `dict[str, int]`). `List`/`Dict` from `typing` are the pre-3.9 style.
+
+<Card id="type-hint-optional" q="How do you write TS number | null as a Python type hint?">
+
+`int | None` (older style: `Optional[int]`). Use lowercase built-ins like `list[int]`.
+
+</Card>
 
 ### 2.20 The cost cheat sheet
 
@@ -648,6 +876,24 @@ This table is the most important part of the module. Average-case complexities f
 | `s - t` | O(len(s)) | |
 
 Hashing a key costs O(key length), so a dict keyed by strings of length L is really O(L) per operation. That matters for problems like Group Anagrams, where you should say "O(n · L)".
+
+<Card id="in-values-cost" q="What does x in my_dict.values() cost, compared to x in my_dict?">
+
+O(n): values aren't indexed, so it scans. `x in my_dict` checks keys in O(1) average.
+
+</Card>
+
+<Card id="hidden-on-ops" q="Name four list operations that look cheap but are O(n).">
+
+`x in a`, `a.pop(0)` / `a.insert(0, x)`, `a[i:j]` slices (copies), `a.remove(x)` / `a.index(x)`. Use a set, `deque`, indices, or a dict instead.
+
+</Card>
+
+<Card id="string-key-hash-cost" q="Why is a dict operation with a string key of length L really O(L)?">
+
+Hashing the key reads every character. So Group Anagrams is O(n · L), not O(n).
+
+</Card>
 
 **deque**
 
@@ -717,7 +963,8 @@ Hashing a key costs O(key length), so a dict keyed by strings of length L is rea
 
 Put these in `drills/00/`. Type everything yourself; don't paste.
 
-**D1. TS → Python translation (45 min)**
+<Drill id="d1-ts-to-python" title="D1. TS → Python translation (45 min)">
+
 Translate each into idiomatic Python (comprehensions, `Counter`/`defaultdict` where appropriate, type hints). Then run them on a couple of inputs.
 
 ```ts
@@ -760,7 +1007,38 @@ function topNByScore(users: {name: string; score: number}[], n: number): string[
 
 For (c), the jobs become a list of dicts: `[{"id": "j1", "status": "done"}, ...]`. For (d), there's a famous one-liner with `zip(*m)`. Find it after you've written the comprehension version.
 
-**D2. Predict the output (20 min)**
+<Answer>
+
+```python
+from collections import Counter, defaultdict
+
+def evens_squared(nums: list[int]) -> list[int]:
+    return [n * n for n in nums if n % 2 == 0]
+
+def word_freq(text: str) -> Counter[str]:
+    return Counter(text.lower().split())   # split() with no args splits on any whitespace and drops empties
+
+def group_by_status(jobs: list[dict[str, str]]) -> dict[str, list[str]]:
+    out: defaultdict[str, list[str]] = defaultdict(list)
+    for j in jobs:
+        out[j["status"]].append(j["id"])
+    return dict(out)
+
+def transpose(m: list[list[int]]) -> list[list[int]]:
+    return [[row[c] for row in m] for c in range(len(m[0]))]
+    # one-liner: [list(col) for col in zip(*m)]
+
+def top_n_by_score(users: list[dict], n: int) -> list[str]:
+    ranked = sorted(users, key=lambda u: (-u["score"], u["name"]))
+    return [u["name"] for u in ranked[:n]]
+```
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-predict-output" title="D2. Predict the output (20 min)">
+
 Write down your prediction for each one *before* running it. Then run it and check the answer key.
 
 ```python
@@ -823,7 +1101,27 @@ a = [1, 3, 3, 3, 7]
 print(bisect.bisect_left(a, 3), bisect.bisect_right(a, 3), bisect.bisect_left(a, 4))
 ```
 
-**D3. collections kata (40 min)**
+<Answer>
+
+1. `-4 1`: floor division rounds toward −infinity, and the remainder takes the divisor's sign.
+2. `[[0, 5, 0], [0, 5, 0], [0, 5, 0]]`: all three rows are the same list object.
+3. `[1, 2]`: the default list was created once and is shared between calls.
+4. `[1, 9, 10, 100]`: numeric sort. (JS would give `[1, 10, 100, 9]`.)
+5. `[1, 2, 3, 4] [1, 2, 3]`: `b` is an alias, `c` is a copy.
+6. `[1, 2, 3] None`: `sort()` sorts in place and returns `None`.
+7. `1`: reading `d["ghost"]` inserted it with the value 0.
+8. `2 0 4`: `Counter` returns 0 for missing keys without inserting them. Distinct letters: h, e, l, o.
+9. `True False True False`: `[0]` is a non-empty list, and `"0"` is a non-empty string.
+10. `True True False`: `'Z'` (90) &lt; `'a'` (97). `[2] < [1, 9]` compares 2 to 1 first, so it's False.
+11. `8 5`: popping gives the max, 8. The next max is 5.
+12. `1 4 4`: the leftmost 3 is at index 1, the index after the last 3 is 4, and 4 would be inserted at index 4.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-collections-kata" title="D3. collections kata (40 min)">
+
 Write each as a function with type hints, plus a few `assert`s:
 
 1. `first_unique_char(s: str) -> int`: the index of the first character that appears exactly once, or −1. Use `Counter`. (This is LeetCode 387.)
@@ -832,29 +1130,75 @@ Write each as a function with type hints, plus a few `assert`s:
 4. `last_k(stream: list[int], k: int) -> list[int]`: return the last k items using `deque(maxlen=k)`.
 5. `simulate_queue(ops: list[str]) -> list[str]`: given ops like `["push a", "push b", "pop", "push c", "pop"]`, return the popped items in FIFO order, using a `deque`.
 
-**D4. heapq kata (40 min)**
+</Drill>
+
+<Drill id="d4-heapq-kata" title="D4. heapq kata (40 min)">
+
 1. `k_smallest(nums, k)`: once with `heapq.nsmallest`, and once by hand with a **max-heap of size k** (negated values). Push each number; if the heap grows past k, pop. Why is this O(n log k)?
 2. `merge_sorted(lists: list[list[int]]) -> list[int]`: merge k sorted lists with a heap of `(value, list_index, element_index)` tuples. (This is the core of LeetCode 23 and of external merge sort in databases.)
 3. `schedule(jobs: list[tuple[int, str]]) -> list[str]`: jobs are `(priority, name)` pairs, where a lower number is more urgent. Return the names in execution order. Then make ties run in **insertion order** (hint: a counter as the second tuple element).
 
-**D5. bisect kata (25 min)**
+<Answer>
+
+**D4.1: why the size-k max-heap is O(n log k)**
+
+The heap never holds more than k + 1 items, so each push and pop costs O(log k). We do n pushes and at most n pops: O(n log k) time and O(k) space. Heapifying all n items and popping k would be O(n + k log n) time but O(n) space (or a mutated input). When k is much smaller than n and the data is a stream, the size-k heap wins.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-bisect-kata" title="D5. bisect kata (25 min)">
+
 Given a sorted list of request timestamps (ints, in seconds):
 1. `count_in_range(ts, start, end) -> int`: the number of requests with `start <= t < end`, in O(log n).
 2. `first_at_or_after(ts, t) -> int | None`: the first timestamp ≥ t, or `None`.
 3. Explain out loud why calling `insort` 10^5 times is O(n²) overall, even though the search is O(log n).
 
-**D6. Sorting kata (25 min)**
+<Answer>
+
+**D5.3: why repeated insort is O(n²)**
+
+Each `insort` finds the position in O(log n), but inserting into a Python list shifts every later element: O(n). Over n inserts, that's 1 + 2 + ... + n = O(n²) shifting in the worst case (and on average too, since the insert point is uniformly random for random input). Sorting once at the end, at O(n log n), is far better. If you need a sorted collection that supports fast inserts, you need a balanced tree or skip list (e.g., the `sortedcontainers` package, which isn't available in interviews).
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-sorting-kata" title="D6. Sorting kata (25 min)">
+
 1. Sort `[("ana", 31), ("bo", 25), ("cy", 31), ("dee", 25)]` by age descending, then name ascending. Use one `sorted` call with a tuple key.
 2. Sort the words of a sentence by frequency descending, then alphabetically. Return the unique words.
 3. Sort a list of `"HH:MM"` strings by time. (Does plain `sorted()` work? Why?)
 4. **Stability:** sort the people from (1) by name first, then by age only. Explain the result.
 
-**D7. Recursion limit experiment (15 min)**
+<Answer>
+
+- **D6.3:** Yes. Zero-padded `"HH:MM"` strings sort correctly as strings, because lexicographic order matches time order when every field has a fixed width. `"9:05"` without padding would break it.
+- **D6.4:** Sorting by name, then (stably) by age, gives: age 25 → `bo`, `dee`; age 31 → `ana`, `cy`. Within the same age, the earlier name order survives because the sort is stable. That's how you do a multi-key sort in two passes: secondary key first, then primary key.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d7-recursion-limit" title="D7. Recursion limit experiment (15 min)">
+
 1. Write a recursive `length(node)` for a linked list. Build a list of 5,000 nodes and call it. What happens?
 2. Rewrite it iteratively.
 3. Try `sys.setrecursionlimit(10**5)` and call the recursive version on 5,000 nodes, then on 500,000. Write down what happens at each size. (Don't be surprised by a segfault on the big one; that's the lesson.)
 
-**D8. Predict the cost (20 min)**
+<Answer>
+
+1. With 5,000 nodes: `RecursionError: maximum recursion depth exceeded`, because the default limit is 1000.
+2. Iterative: `n = 0; while node: n += 1; node = node.next`. That's O(n) time and O(1) space.
+3. With the limit raised, 5,000 nodes usually works. At 500,000 nodes, the C stack typically overflows and the process segfaults ("Segmentation fault (core dumped)"), with no Python traceback. The lesson: raising the limit doesn't add stack memory. Convert deep recursion to iteration.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d8-predict-cost" title="D8. Predict the cost (20 min)">
+
 For each snippet, write the time complexity in terms of n = `len(nums)` (and other named sizes). Some are traps.
 
 ```python
@@ -921,17 +1265,48 @@ def k_smallest(nums, k):
     return [heapq.heappop(nums) for _ in range(k)]
 ```
 
+<Answer>
+
+1. **O(n²)**: `x in seen` scans a list that grows to n.
+2. **O(n)**: set membership is O(1) on average. Space O(n).
+3. **O(n²)**: each `pop(0)` shifts the remaining elements, so (n−1) + (n−2) + ... + 0 is about n²/2.
+4. **O(n log n)**: a sort to find a max that `max()` gets in O(n). (It also mutates the caller's list, which is a side effect.)
+5. **O(n²)**: each `nums[i:]` copies n − i elements and `sum` reads them again. Σ(n − i) = n(n+1)/2. A running suffix sum does it in O(n).
+6. **O(n + u log k)**: O(n) to count, where u is the number of distinct words, then O(u log k) for the top k. With k a small constant, that's O(n).
+7. **O(n²)**: n inserts, each O(n) to shift (see D5.3). `sorted(nums)` would be O(n log n).
+8. **O(n · m)**: `d.values()` isn't a hash lookup. It scans all n values, m times. Build `vals = set(d.values())` once for O(n + m).
+9. **O(n²)**: `insert(0, x)` shifts the whole list every time. Append and reverse once at the end, or use `deque.appendleft`: O(n).
+10. **O(n + k log n)**: `heapify` is O(n), then k pops at O(log n) each. (It also mutates the input.)
+
+</Answer>
+
+</Drill>
+
 **D9. Your first three LeetCode problems (45 min)**
 These are for syntax practice only. Don't worry about patterns yet. Solve each on LeetCode in Python, and write the complexity in a comment at the top:
 - 1929. Concatenation of Array
 - 217. Contains Duplicate (do it twice: once with a set, once with sorting. Compare the complexities.)
 - 242. Valid Anagram (with `Counter`, then with a 26-slot array)
 
-Log all three in [PROGRESS.md](../PROGRESS.md).
+Log all three on the [Progress page](/progress). They're tracked with timers in [Problems](#problems) below.
+
+---
+
+## Problems
+
+Syntax warm-ups (see D9). Write the complexity in a comment at the top of each solution.
+
+<Problems>
+<Problem lc={1929} slug="concatenation-of-array" title="Concatenation of Array" pattern="arrays" difficulty="E" />
+<Problem lc={217} slug="contains-duplicate" title="Contains Duplicate" pattern="hashing" difficulty="E" nc />
+<Problem lc={242} slug="valid-anagram" title="Valid Anagram" pattern="hashing" difficulty="E" nc />
+</Problems>
 
 ---
 
 ## 4. Build: `logstats`, an access log analyzer (1.5–2 hrs)
+
+<Build id="logstats" title="logstats: an access log analyzer">
 
 You've written log processing in Node. Now write it in Python, using every tool from this module. It's a realistic backend task, and every function maps to a DSA idea you'll study properly later.
 
@@ -990,124 +1365,249 @@ Bursty IPs (>30 req / 10s): 4 → 10.0.3.17, ...
 
 Commit it to `dsa-journey`.
 
+**Acceptance**
+
+- [ ] `gen_logs.py` creates a 200,000-line `access.log`
+- [ ] `logstats.py` has all 8 functions, each with type hints and a docstring stating its time and space complexity
+- [ ] `Request` is a `@dataclass`; `top_endpoints` is implemented with both `Counter.most_common` and `heapq.nlargest`
+- [ ] `percentiles` uses the nearest-rank formula on sorted latencies
+- [ ] `count_between` uses `bisect` (O(log n)), and `bursty_ips` uses a `deque` per IP as a sliding window
+- [ ] `main()` prints the report (requests, status counts, top 5, p50/p95/p99, bursty IPs)
+- [ ] `tests/test_logstats.py` covers every function plus: an empty list, k larger than the number of distinct paths, and an IP exactly at the limit (not flagged)
+- [ ] `pytest -q` passes
+- [ ] You timed the run, then the deliberate `list`-with-`in` version of `requests_by_ip`, and noted the difference
+- [ ] Committed to `dsa-journey`
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-floor-round" type="output" answer="-4 4 4">
+
+What does this print?
+
+```python
+print(7 // -2, round(3.5), round(4.5))
+```
+
+<Why>`//` floors toward −infinity, so `7 // -2` is `-4` (not `-3`). `round` uses banker's rounding (half to even): 3.5 → 4 and 4.5 → 4. See [2.3](#23-numbers-the-differences-that-bite).</Why>
+
+</Quiz>
+
+<Quiz id="q-alias-rebind" type="output" answer="[1, 2, 3] [1, 2, 3, 4, 5]">
+
+What does this print?
+
+```python
+a = [1, 2, 3]
+b = a
+a = a + [4]
+a.append(5)
+print(b, a)
+```
+
+<Why>`a + [4]` builds a **new** list and rebinds `a` to it, so `b` still points at the original `[1, 2, 3]`. The `append` only changes the new list. See [2.5](#25-lists-pythons-dynamic-array) (copies and aliasing).</Why>
+
+</Quiz>
+
+<Quiz id="q-empty-set" type="mcq" answer="c">
+
+Which expression creates an empty **set**?
+
+<Choice id="a">`{}`</Choice>
+<Choice id="b">`set[]`</Choice>
+<Choice id="c">`set()`</Choice>
+<Choice id="d">`{,}`</Choice>
+
+<Why>`{}` is an empty dict; the other two aren't valid Python. See [2.10](#210-sets).</Why>
+
+</Quiz>
+
+<Quiz id="q-hidden-on" type="multi" answer="a,c,e">
+
+`a` is a list of n items. Which operations are O(n)?
+
+<Choice id="a">`x in a`</Choice>
+<Choice id="b">`a.pop()`</Choice>
+<Choice id="c">`a.pop(0)`</Choice>
+<Choice id="d">`a[i] = x`</Choice>
+<Choice id="e">`a[1:]`</Choice>
+
+<Why>`in` is a linear scan, `pop(0)` shifts every element left, and a slice copies n − 1 elements. `pop()` from the end and index assignment are O(1). See [2.20](#220-the-cost-cheat-sheet).</Why>
+
+</Quiz>
+
+<Quiz id="q-pair-count-cost" type="complexity" time="O(n)" space="O(n)">
+
+What are the time and space complexity, with n = `len(nums)`?
+
+```python
+def count_pairs(nums, target):
+    seen = set()
+    count = 0
+    for x in nums:
+        if target - x in seen:
+            count += 1
+        seen.add(x)
+    return count
+```
+
+<Why>One pass; set membership and `add` are O(1) on average. The set can grow to n items. See [2.10](#210-sets) and [2.20](#220-the-cost-cheat-sheet).</Why>
+
+</Quiz>
+
+<Quiz id="q-bfs-bug" type="bug" line="8">
+
+This BFS crashes on the first iteration. Click the buggy line.
+
+```python
+from collections import deque
+
+def bfs_order(graph, start):
+    seen = {start}
+    q = deque([start])
+    order = []
+    while q:
+        node = q.pop(0)
+        order.append(node)
+        for nxt in graph[node]:
+            if nxt not in seen:
+                seen.add(nxt)
+                q.append(nxt)
+    return order
+```
+
+<Why>`deque.pop()` takes no arguments (`TypeError`), and even on a list `pop(0)` would be O(n). Use `q.popleft()`. See [2.13](#213-collections-deque-defaultdict-counter).</Why>
+
+</Quiz>
+
+<Quiz id="q-cost-order" type="order" answer="len,heappush,in-list,sort">
+
+Order these from cheapest to most expensive, for a container of n items.
+
+<Step id="len">`len(a)`</Step>
+<Step id="heappush">`heapq.heappush(h, x)`</Step>
+<Step id="in-list">`x in a` (a list)</Step>
+<Step id="sort">`a.sort()`</Step>
+
+<Why>O(1) < O(log n) < O(n) < O(n log n). See [2.20](#220-the-cost-cheat-sheet).</Why>
+
+</Quiz>
+
+<Quiz id="q-bisect-count" type="blank" answer="bisect_right||bisect.bisect_right">
+
+Fill in the blank so this counts how many times `x` appears in the sorted list `a`, in O(log n).
+
+```python
+import bisect
+
+def count(a, x):
+    return bisect.___(a, x) - bisect.bisect_left(a, x)
+```
+
+<Why>`bisect_right` returns the index just after the last `x`, and `bisect_left` the index of the first one. See [2.15](#215-bisect-binary-search-on-sorted-lists).</Why>
+
+</Quiz>
+
+<Quiz id="q-heap-tie" type="mcq" answer="b">
+
+You push `(node.val, node)` tuples onto a heap, where `node` is a `ListNode`. What happens when two nodes have the same `val`?
+
+<Choice id="a">The heap keeps them in insertion order</Choice>
+<Choice id="b">`TypeError`: Python tries to compare the two `ListNode`s</Choice>
+<Choice id="c">One of them is silently dropped</Choice>
+<Choice id="d">Python compares them by memory address</Choice>
+
+<Why>Tuples compare element by element, so a tie on `val` compares the nodes, which don't define `<`. Fix: `(node.val, i, node)` with a unique counter `i`. See [2.14](#214-heapq-priority-queues).</Why>
+
+</Quiz>
+
+<Quiz id="q-stable-two-pass" type="explain">
+
+You sort a list of people by name, then sort the result by age only. Why does each age group end up in name order?
+
+<Model>
+
+Python's sort is **stable**: elements with equal keys (the same age) keep their relative order from the input, which was already sorted by name. So sorting by the secondary key first, then by the primary key, gives a correct multi-key sort.
+
+</Model>
+
+<Why>See [2.12](#212-sorting) and D6.4.</Why>
+
+</Quiz>
+
 ---
 
 ## 5. Checkpoint
 
 Answer these out loud, without notes. If you get stuck on one, re-read that section.
 
-1. What do `-7 // 2` and `-7 % 2` return in Python, and how does that differ from JavaScript? How do you get truncating division?
-2. Why is `[[0] * 3] * 3` a bug? What's the correct way to build a grid?
-3. Why can a tuple be a dict key but a list can't? Give two DSA uses for tuple keys.
-4. What's the cost of `x in my_list` versus `x in my_set`? What about `x in my_dict.values()`?
-5. Why use `deque` for a queue instead of `list`? What does each operation cost on both?
-6. How do you get a max-heap with `heapq`? How do you push items with priorities, and what goes wrong when priorities tie?
-7. What do `bisect_left` and `bisect_right` return for a value that appears several times? How do you count occurrences with them?
-8. How do you sort by one key descending and another key ascending in a single `sorted` call? Why does stability matter?
-9. What's Python's default recursion limit, what happens when you exceed it, and what's the right fix for deep recursion?
-10. Name three operations that look O(1) but are O(n), and say what to use instead.
+<Checkpoint>
+<Ask id="cp-floor-div" q="What do -7 // 2 and -7 % 2 return in Python, and how does that differ from JavaScript? How do you get truncating division?" section="23-numbers-the-differences-that-bite">
+
+`-4` and `1`. Python's `//` floors toward −infinity and `%` takes the divisor's sign; JS truncates toward zero (`Math.trunc(-7/2)` is `-3`, `-7 % 2` is `-1`). Truncate with `int(-7 / 2)`.
+
+</Ask>
+<Ask id="cp-grid" q="Why is [[0] * 3] * 3 a bug? What's the correct way to build a grid?" section="25-lists-pythons-dynamic-array">
+
+The outer `* 3` repeats a reference to the same inner list, so all rows are one object and a write to one row shows in all. Build each row separately: `[[0] * 3 for _ in range(3)]`.
+
+</Ask>
+<Ask id="cp-tuple-keys" q="Why can a tuple be a dict key but a list can't? Give two DSA uses for tuple keys." section="28-tuples-immutable-hashable-records">
+
+Dict keys must be hashable; tuples are immutable (and hash by value), lists are mutable and unhashable. Uses: `(row, col)` in a visited set for grid BFS/DFS, `(i, j)` memo keys in 2D DP, and `tuple(sorted(word))` as the Group Anagrams key.
+
+</Ask>
+<Ask id="cp-membership-cost" q="What's the cost of x in my_list versus x in my_set? What about x in my_dict.values()?" section="220-the-cost-cheat-sheet">
+
+List: O(n) linear scan. Set: O(1) average (hash lookup). `my_dict.values()`: O(n), because only keys are hashed.
+
+</Ask>
+<Ask id="cp-deque" q="Why use deque for a queue instead of list? What does each operation cost on both?" section="213-collections-deque-defaultdict-counter">
+
+`deque` does `append`, `appendleft`, `pop` and `popleft` in O(1). A list has O(1) `append`/`pop()` at the end but O(n) `pop(0)`/`insert(0, x)`, since every element shifts. (Deque indexing in the middle is O(n).)
+
+</Ask>
+<Ask id="cp-heapq" q="How do you get a max-heap with heapq? How do you push items with priorities, and what goes wrong when priorities tie?" section="214-heapq-priority-queues">
+
+Push negated values and negate on pop. Push `(priority, item)` tuples. On a tie Python compares the next element; if that's an object without `<` you get a `TypeError`. Add a unique counter: `(priority, counter, item)`.
+
+</Ask>
+<Ask id="cp-bisect" q="What do bisect_left and bisect_right return for a value that appears several times? How do you count occurrences with them?" section="215-bisect-binary-search-on-sorted-lists">
+
+`bisect_left` returns the index of the first occurrence; `bisect_right` the index just after the last one. Count = `bisect_right(a, x) - bisect_left(a, x)`, in O(log n).
+
+</Ask>
+<Ask id="cp-sorting" q="How do you sort by one key descending and another key ascending in a single sorted call? Why does stability matter?" section="212-sorting">
+
+Use a tuple key and negate the numeric descending key: `key=lambda r: (-r.score, r.name)`. Stability keeps equal elements in their input order, which lets you do multi-key sorts in passes (secondary key first, then primary) and makes results predictable.
+
+</Ask>
+<Ask id="cp-recursion-limit" q="What's Python's default recursion limit, what happens when you exceed it, and what's the right fix for deep recursion?" section="217-the-recursion-limit">
+
+About 1000 frames; exceeding it raises `RecursionError`. Raising the limit can segfault (the C stack doesn't grow). The fix: rewrite deep recursion iteratively with an explicit stack or queue.
+
+</Ask>
+<Ask id="cp-hidden-on" q="Name three operations that look O(1) but are O(n), and say what to use instead." section="220-the-cost-cheat-sheet">
+
+`x in list` → use a set. `list.pop(0)` / `list.insert(0, x)` → use a `deque`. `a[1:]` slicing (a copy) → pass indices. Also `x in d.values()` → build a set of values once.
+
+</Ask>
+</Checkpoint>
 
 ---
 
 ## 6. Resources
 
 **Required**
-- Python docs: [*`collections`*](https://docs.python.org/3/library/collections.html) (read `deque`, `defaultdict`, and `Counter`) and [*`heapq`*](https://docs.python.org/3/library/heapq.html) (the intro and the "Priority Queue Implementation Notes")
-- Python wiki: [*TimeComplexity*](https://wiki.python.org/moin/TimeComplexity). Bookmark it.
+
+<Resource href="https://docs.python.org/3/library/collections.html" type="docs" time="30m" required>Python docs: collections (read deque, defaultdict, and Counter)</Resource>
+<Resource href="https://docs.python.org/3/library/heapq.html" type="docs" time="20m" required>Python docs: heapq (the intro and the "Priority Queue Implementation Notes")</Resource>
+<Resource href="https://wiki.python.org/moin/TimeComplexity" type="docs" time="15m" required>Python wiki: TimeComplexity. Bookmark it.</Resource>
 
 **Recommended**
-- Python docs: [*Sorting Techniques*](https://docs.python.org/3/howto/sorting.html), which covers key functions, stability, and multi-key sorting in 10 minutes
-- If you want a structured Python refresher: the official [*Python Tutorial*](https://docs.python.org/3/tutorial/), sections 3–5 and 9. Skim it; you know programming already.
 
----
-
-## Answer key
-
-Don't open these until you've committed to your answers.
-
-<details>
-<summary>D1: TS → Python (one good version)</summary>
-
-```python
-from collections import Counter, defaultdict
-
-def evens_squared(nums: list[int]) -> list[int]:
-    return [n * n for n in nums if n % 2 == 0]
-
-def word_freq(text: str) -> Counter[str]:
-    return Counter(text.lower().split())   # split() with no args splits on any whitespace and drops empties
-
-def group_by_status(jobs: list[dict[str, str]]) -> dict[str, list[str]]:
-    out: defaultdict[str, list[str]] = defaultdict(list)
-    for j in jobs:
-        out[j["status"]].append(j["id"])
-    return dict(out)
-
-def transpose(m: list[list[int]]) -> list[list[int]]:
-    return [[row[c] for row in m] for c in range(len(m[0]))]
-    # one-liner: [list(col) for col in zip(*m)]
-
-def top_n_by_score(users: list[dict], n: int) -> list[str]:
-    ranked = sorted(users, key=lambda u: (-u["score"], u["name"]))
-    return [u["name"] for u in ranked[:n]]
-```
-</details>
-
-<details>
-<summary>D2: Predict the output</summary>
-
-1. `-4 1`: floor division rounds toward −infinity, and the remainder takes the divisor's sign.
-2. `[[0, 5, 0], [0, 5, 0], [0, 5, 0]]`: all three rows are the same list object.
-3. `[1, 2]`: the default list was created once and is shared between calls.
-4. `[1, 9, 10, 100]`: numeric sort. (JS would give `[1, 10, 100, 9]`.)
-5. `[1, 2, 3, 4] [1, 2, 3]`: `b` is an alias, `c` is a copy.
-6. `[1, 2, 3] None`: `sort()` sorts in place and returns `None`.
-7. `1`: reading `d["ghost"]` inserted it with the value 0.
-8. `2 0 4`: `Counter` returns 0 for missing keys without inserting them. Distinct letters: h, e, l, o.
-9. `True False True False`: `[0]` is a non-empty list, and `"0"` is a non-empty string.
-10. `True True False`: `'Z'` (90) < `'a'` (97). `[2] < [1, 9]` compares 2 to 1 first, so it's False.
-11. `8 5`: popping gives the max, 8. The next max is 5.
-12. `1 4 4`: the leftmost 3 is at index 1, the index after the last 3 is 4, and 4 would be inserted at index 4.
-</details>
-
-<details>
-<summary>D4.1: why the size-k max-heap is O(n log k)</summary>
-
-The heap never holds more than k + 1 items, so each push and pop costs O(log k). We do n pushes and at most n pops: O(n log k) time and O(k) space. Heapifying all n items and popping k would be O(n + k log n) time but O(n) space (or a mutated input). When k is much smaller than n and the data is a stream, the size-k heap wins.
-</details>
-
-<details>
-<summary>D5.3: why repeated insort is O(n²)</summary>
-
-Each `insort` finds the position in O(log n), but inserting into a Python list shifts every later element: O(n). Over n inserts, that's 1 + 2 + ... + n = O(n²) shifting in the worst case (and on average too, since the insert point is uniformly random for random input). Sorting once at the end, at O(n log n), is far better. If you need a sorted collection that supports fast inserts, you need a balanced tree or skip list (e.g., the `sortedcontainers` package, which isn't available in interviews).
-</details>
-
-<details>
-<summary>D6.3 and D6.4</summary>
-
-- **D6.3:** Yes. Zero-padded `"HH:MM"` strings sort correctly as strings, because lexicographic order matches time order when every field has a fixed width. `"9:05"` without padding would break it.
-- **D6.4:** Sorting by name, then (stably) by age, gives: age 25 → `bo`, `dee`; age 31 → `ana`, `cy`. Within the same age, the earlier name order survives because the sort is stable. That's how you do a multi-key sort in two passes: secondary key first, then primary key.
-</details>
-
-<details>
-<summary>D7: recursion limit</summary>
-
-1. With 5,000 nodes: `RecursionError: maximum recursion depth exceeded`, because the default limit is 1000.
-2. Iterative: `n = 0; while node: n += 1; node = node.next`. That's O(n) time and O(1) space.
-3. With the limit raised, 5,000 nodes usually works. At 500,000 nodes, the C stack typically overflows and the process segfaults ("Segmentation fault (core dumped)"), with no Python traceback. The lesson: raising the limit doesn't add stack memory. Convert deep recursion to iteration.
-</details>
-
-<details>
-<summary>D8: Predict the cost</summary>
-
-1. **O(n²)**: `x in seen` scans a list that grows to n.
-2. **O(n)**: set membership is O(1) on average. Space O(n).
-3. **O(n²)**: each `pop(0)` shifts the remaining elements, so (n−1) + (n−2) + ... + 0 is about n²/2.
-4. **O(n log n)**: a sort to find a max that `max()` gets in O(n). (It also mutates the caller's list, which is a side effect.)
-5. **O(n²)**: each `nums[i:]` copies n − i elements and `sum` reads them again. Σ(n − i) = n(n+1)/2. A running suffix sum does it in O(n).
-6. **O(n + u log k)**: O(n) to count, where u is the number of distinct words, then O(u log k) for the top k. With k a small constant, that's O(n).
-7. **O(n²)**: n inserts, each O(n) to shift (see D5.3). `sorted(nums)` would be O(n log n).
-8. **O(n · m)**: `d.values()` isn't a hash lookup. It scans all n values, m times. Build `vals = set(d.values())` once for O(n + m).
-9. **O(n²)**: `insert(0, x)` shifts the whole list every time. Append and reverse once at the end, or use `deque.appendleft`: O(n).
-10. **O(n + k log n)**: `heapify` is O(n), then k pops at O(log n) each. (It also mutates the input.)
-</details>
+<Resource href="https://docs.python.org/3/howto/sorting.html" type="docs" time="10m">Python docs: Sorting Techniques (key functions, stability, and multi-key sorting)</Resource>
+<Resource href="https://docs.python.org/3/tutorial/" type="docs" time="2h">The official Python Tutorial, sections 3–5 and 9. Skim it; you know programming already.</Resource>

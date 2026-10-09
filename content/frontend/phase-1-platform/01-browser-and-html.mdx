@@ -1,0 +1,790 @@
+# Module 01: How the Browser Works + Semantic HTML
+
+**Time:** ~1 week (10–15 hrs)
+**Prerequisites:** none
+**You'll need:** Chrome or Firefox, VS Code, Node installed (you have it)
+
+---
+
+## 1. Why it matters (the backend analogy)
+
+On the backend you understand the full lifecycle: a request arrives, middleware runs, a handler executes, a response is serialized. When something is slow or broken, you know which layer to look at.
+
+The browser has a lifecycle too, and most frontend confusion comes from not knowing it:
+
+| Backend (what you know) | Browser (what you'll learn) |
+|---|---|
+| Request → middleware → handler → response | HTML bytes → DOM → CSSOM → render tree → layout → paint → composite |
+| Node's event loop, single thread | The browser main thread, *also* single-threaded, shared by your JS **and** rendering |
+| Blocking the event loop stalls all requests | Blocking the main thread freezes the page: no clicks, no scrolling, no animation |
+| Data model / schema | HTML: the structure and *meaning* of the content |
+| Response serialization format | CSS: how that structure is presented |
+| API contract consumed by other services | The **accessibility tree**: the API your page exposes to screen readers, search engines, and AI agents |
+
+The last row matters most. **HTML isn't about how things look. It's a data model with semantics.** A `<button>` isn't "a gray box". It's a contract: focusable, activates with Enter and Space, announced as "button". If you use a `<div>` instead, you've broken the contract and have to re-implement it by hand.
+
+<Card id="html-is-data-model" q="Backend analogy: what are HTML, CSS, and the accessibility tree?">
+
+HTML is the data model (structure and *meaning*), CSS is the presentation (like a serialization format), and the accessibility tree is the API contract your page exposes to screen readers, search engines, and AI agents.
+
+</Card>
+
+<Card id="button-is-contract" q="Why is a button element a 'contract' rather than 'a gray box'?">
+
+It promises behavior: focusable, activates with Enter and Space, announced as "button". A `<div>` breaks that contract and you must re-implement it by hand.
+
+</Card>
+
+---
+
+## 2. Concepts
+
+### 2.1 From URL to pixels
+
+When you type a URL and press Enter:
+
+1. **Network:** DNS → TCP → TLS → HTTP request → the server returns HTML. (You know this part.)
+2. **Parse HTML → DOM.** The browser streams the HTML and builds the **DOM** (Document Object Model), a tree of nodes. It's an object graph you can query and mutate from JS.
+3. **Discover subresources.** When the parser hits `<link rel="stylesheet">`, `<script>`, or `<img>`, it fetches them. A preload scanner looks ahead and starts these downloads early.
+4. **Parse CSS → CSSOM.** All the CSS becomes another tree of rules.
+5. **Style calculation.** For every DOM element, the browser works out the final value of every CSS property (the "computed style"). The cascade lives here (Module 02).
+6. **Layout (a.k.a. reflow).** It calculates the exact geometry, meaning the x, y, width, and height of every box. This is the expensive part.
+7. **Paint.** It fills in pixels: text, colors, borders, shadows, images, split into layers.
+8. **Composite.** The GPU stacks the layers into the final frame.
+
+```
+HTML ──► DOM ─┐
+              ├──► Style ──► Layout ──► Paint ──► Composite ──► 🖥️
+CSS ──► CSSOM ┘
+```
+
+**Two blocking rules you must know:**
+
+- **CSS is render-blocking.** The browser won't paint anything until it has the CSS. Otherwise you'd see a flash of unstyled content.
+- **Plain `<script>` is parser-blocking.** When the parser reaches `<script src="app.js">`, it *stops building the DOM*, downloads the script, and runs it, because the script might call `document.write` or change the DOM. That's why scripts used to go at the bottom of `<body>`.
+
+The modern fix:
+
+```html
+<script src="app.js" defer></script>   <!-- download in parallel, run after HTML is parsed, in order -->
+<script src="analytics.js" async></script> <!-- download in parallel, run as soon as ready, any order -->
+<script type="module" src="main.js"></script> <!-- modules are deferred by default -->
+```
+
+Rule of thumb: **use `defer` or `type="module"` for your app code** and `async` for independent third-party scripts.
+
+**Why this matters later:** when you change the DOM or CSS from JS, the browser has to redo some of steps 5–8. Changing `width` re-runs layout → paint → composite, which is expensive. Changing `transform` or `opacity` can skip straight to composite, which is cheap. Every frontend performance and animation technique comes back to this pipeline (Modules 14, 16, 17).
+
+<Card id="rendering-pipeline" q="Name the stages from HTML bytes to pixels.">
+
+Parse HTML → DOM (and CSS → CSSOM) → style calculation → layout (reflow) → paint → composite.
+
+</Card>
+
+<Card id="blocking-rules" q="Why is CSS render-blocking and a plain script parser-blocking? What do defer and async do?">
+
+CSS: nothing paints until CSS arrives, to avoid a flash of unstyled content. Plain script: the parser stops building the DOM to download and run it, because it might change the DOM. `defer` downloads in parallel and runs after parsing, in order; `async` downloads in parallel and runs as soon as ready, in any order. Modules are deferred by default.
+
+</Card>
+
+<Card id="width-vs-transform" q="Which pipeline stages does changing width re-trigger, versus transform or opacity?">
+
+`width`: layout → paint → composite (expensive). `transform` / `opacity`: can skip straight to composite (cheap).
+
+</Card>
+
+### 2.2 The main thread and the frame budget
+
+At 60 fps the browser has **~16.7 ms per frame**. In that time the main thread must run your JS, recalculate styles, do layout, and paint. If your JS takes 200 ms, the page freezes for 200 ms: clicks don't respond and scrolling stutters.
+
+Backend analogy: it's exactly like doing CPU-heavy sync work in an Express handler. The whole server stalls. The same discipline applies: keep main-thread work short, and move heavy work off-thread (Web Workers, Module 19).
+
+<Card id="frame-budget" q="What is the frame budget at 60 fps, and why does long JS freeze the page?">
+
+~16.7 ms per frame. The single main thread runs JS *and* style, layout, and paint, so a 200 ms JS task blocks rendering and input for 200 ms. Same as sync CPU work stalling an Express server.
+
+</Card>
+
+### 2.3 The document skeleton
+
+Every page starts here. Learn what each line does.
+
+```html
+<!doctype html>                         <!-- standards mode (without it: "quirks mode", legacy weird rendering) -->
+<html lang="en">                        <!-- language: screen-reader pronunciation, translation, hyphenation -->
+<head>
+  <meta charset="utf-8">                <!-- text encoding; must be early -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+                                        <!-- WITHOUT this, phones render at ~980px wide and zoom out. Responsive design depends on it -->
+  <title>Orders · Acme Dashboard</title><!-- tab title, bookmarks, search results, first thing a screen reader announces -->
+  <meta name="description" content="Track and manage your Acme orders.">
+  <link rel="stylesheet" href="styles.css">
+  <script src="main.js" type="module"></script>
+</head>
+<body>
+  <!-- content -->
+</body>
+</html>
+```
+
+<Card id="viewport-meta" q="What does the viewport meta tag do, and what happens without it?">
+
+`width=device-width, initial-scale=1` makes the layout viewport match the device width. Without it, phones render at ~980px wide and zoom out, so responsive design breaks.
+
+</Card>
+
+<Card id="doctype-lang" q="What do the doctype and the lang attribute on html do?">
+
+`<!doctype html>` enables standards mode (without it: quirks mode). `lang` sets the language for screen-reader pronunciation, translation, and hyphenation.
+
+</Card>
+
+### 2.4 Semantic HTML: elements are contracts
+
+**Semantic** means the element describes *what the content is*, not how it looks. Browsers, screen readers, search engines, and browser features like Reader Mode and autofill all rely on it.
+
+#### Page structure (landmarks)
+
+```html
+<body>
+  <header>            <!-- site banner: logo, main nav -->
+    <nav aria-label="Main">...</nav>
+  </header>
+
+  <main>              <!-- THE primary content. Exactly one per page -->
+    <article>         <!-- self-contained content: a blog post, product card, comment -->
+      <h1>...</h1>
+    </article>
+    <aside>...</aside><!-- tangential: sidebar, related links -->
+  </main>
+
+  <footer>...</footer>
+</body>
+```
+
+Screen-reader users jump between these **landmarks** the way you jump between functions in an IDE outline. Build a page from `<div>`s alone and they're stuck reading it top to bottom.
+
+`<section>` is a thematic group *with a heading*. If it has no heading, it should probably be a `<div>`.
+
+`<div>` and `<span>` are fine. They're the "no meaning" elements, used as hooks for layout and styling. The mistake is using them *instead of* a meaningful element.
+
+<Card id="landmarks" q="What are landmarks and why do they matter?">
+
+`<header>`, `<nav>`, `<main>` (exactly one), `<aside>`, `<footer>`. Screen-reader users jump between them like an IDE outline; a page of `<div>`s forces them to read top to bottom.
+
+</Card>
+
+#### Headings are an outline, not font sizes
+
+```html
+<h1>Account settings</h1>
+  <h2>Profile</h2>
+    <h3>Avatar</h3>
+  <h2>Security</h2>
+    <h3>Two-factor authentication</h3>
+```
+
+- One `<h1>` per page, describing the page.
+- Don't skip levels (h2 → h4).
+- **Never choose a heading level for its size.** Size is CSS's job. If you want small text that's structurally an h2, use an h2 and style it smaller.
+
+Screen-reader users navigate by headings more than anything else. It's their table of contents.
+
+<Card id="heading-rules" q="What are the three heading rules?">
+
+One `<h1>` per page describing it. Don't skip levels. Never pick a level for its size; size is CSS's job.
+
+</Card>
+
+#### Interactive elements: the most important rule in this module
+
+| You want... | Use | Never |
+|---|---|---|
+| Something that **does an action** (submit, open modal, delete) | `<button>` | `<div onclick>` |
+| Something that **goes somewhere** (another page or URL) | `<a href="...">` | `<button onclick="location=...">`, `<a>` without href |
+
+What a `<button>` gives you for free, and what a `<div onclick>` doesn't:
+- It's focusable with Tab
+- It activates with Enter **and** Space
+- It's announced as "button" with its label
+- It can be `disabled`
+- It submits its form (default `type="submit"` inside a form, so set `type="button"` when you don't want that)
+
+What an `<a href>` gives you: open in new tab, copy link, middle-click, a visited state, and announcement as "link".
+
+To make a div behave like a button you'd need `role="button"`, `tabindex="0"`, and keydown handlers for Enter and Space. That's re-implementing a built-in, badly. **Use the native element.**
+
+<Card id="button-vs-link" q="When do you use a button and when a link? What does a button give you that a div with onclick doesn't?">
+
+Button = does an action; `<a href>` = goes somewhere. A button is focusable with Tab, activates with Enter and Space, is announced as "button", can be `disabled`, and submits its form (default `type="submit"`).
+
+</Card>
+
+#### Text-level semantics
+
+```html
+<p>Paragraphs are paragraphs, not <br><br> line breaks.</p>
+<strong>important</strong> vs <b>just bold styling</b>
+<em>stress emphasis</em> vs <i>alternate voice, e.g. a term</i>
+<code>inline code</code>, <pre><code>block code</code></pre>
+<time datetime="2026-10-06">Oct 6</time>
+<abbr title="HyperText Markup Language">HTML</abbr>
+<ul>/<ol>/<li> for any list, including nav menus and card grids
+<dl><dt>Term</dt><dd>Definition</dd></dl> for key-value pairs (great for "details" panels)
+```
+
+#### Images
+
+```html
+<img src="chart.png" alt="Revenue grew 40% from Q1 to Q3" width="800" height="400">
+<img src="divider.svg" alt="">  <!-- decorative: EMPTY alt, so screen readers skip it -->
+```
+
+- `alt` describes the **purpose** of the image, not its pixels. A logo linking home gets `alt="Acme home"`, not "blue logo".
+- A missing `alt` means the screen reader may read the filename. An empty `alt=""` explicitly means "decorative".
+- Always set `width` and `height`. The browser reserves the space before the image loads, which prevents layout shift (a Core Web Vital, Module 14).
+- Use `loading="lazy"` for images below the fold.
+
+<Card id="alt-empty-vs-missing" q="What's the difference between alt=&quot;&quot; and a missing alt? Why set width and height on images?">
+
+Empty `alt=""` explicitly marks the image decorative, so screen readers skip it. Missing `alt` may make the screen reader read the filename. `width`/`height` let the browser reserve space before load, preventing layout shift.
+
+</Card>
+
+#### Tables are for tabular data only
+
+```html
+<table>
+  <caption>Orders this week</caption>
+  <thead><tr><th scope="col">ID</th><th scope="col">Customer</th><th scope="col">Total</th></tr></thead>
+  <tbody><tr><td>#1042</td><td>Abebe K.</td><td>$120.00</td></tr></tbody>
+</table>
+```
+
+Use tables for data that has rows and columns, like an admin grid. Never use them for page layout; that's what CSS Grid is for.
+
+### 2.5 Forms: your backend instincts apply here
+
+Forms are where your backend background helps the most. A form is a **client-side request builder**.
+
+```html
+<form action="/api/signup" method="post">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" autocomplete="email" required>
+
+  <label for="pw">Password</label>
+  <input id="pw" name="password" type="password" autocomplete="new-password"
+         minlength="12" required aria-describedby="pw-hint">
+  <p id="pw-hint">At least 12 characters.</p>
+
+  <fieldset>
+    <legend>Plan</legend>
+    <label><input type="radio" name="plan" value="free" checked> Free</label>
+    <label><input type="radio" name="plan" value="pro"> Pro</label>
+  </fieldset>
+
+  <label><input type="checkbox" name="terms" required> I accept the terms</label>
+
+  <button type="submit">Create account</button>
+</form>
+```
+
+Key facts:
+- **`name` is the field key** in the request body (`email=...&password=...`). An input without a `name` isn't submitted.
+- **Every input needs a `<label>`.** Connect them with `for` and `id`, or wrap the input. Clicking the label focuses the input, and screen readers announce it. A `placeholder` is **not** a label: it disappears when you type and often has poor contrast.
+- **Use the right `type`:** `email`, `tel`, `url`, `number`, `date`, `search`, `password`. On mobile each one opens the right keyboard, and you get built-in validation.
+- **Use `autocomplete`:** `email`, `name`, `current-password`, `new-password`, `one-time-code`, `street-address`. It makes password managers and autofill work. Getting it wrong is a real UX failure.
+- **Built-in validation:** `required`, `minlength`, `maxlength`, `min`, `max`, `pattern`. The browser blocks submission and shows messages. *This is UX, not security. Always validate on the server too.* You already know that.
+- `<fieldset>` + `<legend>` group related controls. A radio group should always have one.
+- `aria-describedby` links help text and error messages to the input, so they're read when the input gets focus.
+
+<Card id="form-name-attr" q="What does the name attribute do on a form input?">
+
+It's the field key in the request body (`email=...&password=...`). An input without a `name` isn't submitted.
+
+</Card>
+
+<Card id="placeholder-not-label" q="Why is a placeholder not a label?">
+
+It disappears when you type and often has poor contrast. Use a real `<label>` (via `for`/`id` or wrapping): clicking it focuses the input and screen readers announce it.
+
+</Card>
+
+<Card id="client-validation-ux" q="Is built-in form validation (required, minlength, pattern) a security measure?">
+
+No. It's UX: the browser blocks submission and shows messages. Always validate on the server too.
+
+</Card>
+
+### 2.6 The accessibility tree
+
+The browser builds a third tree alongside the DOM: the **accessibility tree**. Each node has:
+- **Role:** button, link, heading (level 2), textbox, navigation...
+- **Name:** "Create account", which comes from text content, the `<label>`, `alt`, or `aria-label`
+- **State:** disabled, checked, expanded, required, invalid...
+
+Screen readers, voice control ("click Create account"), and many AI browsing agents read *this* tree, not your pixels. Semantic HTML fills it in correctly for free.
+
+**ARIA** (`role`, `aria-*` attributes) lets you patch this tree by hand. The **first rule of ARIA**: *don't use ARIA if a native element does the job.* `<button>` is better than `<div role="button">` every time. You'll use ARIA for real later, for custom widgets like tabs, comboboxes, and dialogs (Module 15).
+
+**Try it now:** Chrome DevTools → Elements → **Accessibility** pane (or enable "full accessibility tree" view). Inspect a `<button>` and then a `<div>` with a click handler and compare them.
+
+<Card id="a11y-tree-role-name-state" q="What is the accessibility tree, and what three things does each node have?">
+
+A tree the browser builds alongside the DOM, read by screen readers, voice control, and AI agents. Each node has a **role** (button, link, heading...), a **name** (from text, label, `alt`, `aria-label`), and **state** (disabled, checked, expanded...).
+
+</Card>
+
+<Card id="first-rule-of-aria" q="What is the first rule of ARIA?">
+
+Don't use ARIA if a native element does the job. `<button>` beats `<div role="button">` every time.
+
+</Card>
+
+### 2.7 DevTools: your new debugger
+
+Get comfortable with these this week:
+- **Elements:** the live DOM. Edit HTML and CSS in place. Right-click → "Break on subtree modifications".
+- **Elements → Accessibility pane:** role, name, and state for any node.
+- **Network:** throttle to "Slow 4G" and watch what blocks rendering. Look at the waterfall.
+- **Lighthouse:** run an audit and read the Accessibility and SEO sections.
+- **Performance:** record a page load and find the Parse HTML, Layout, and Paint entries. You don't need to understand them all yet; just see the pipeline from 2.1 for real.
+
+<Card id="devtools-panels" q="Which DevTools panel shows role, name, and state, and which shows the rendering pipeline for a page load?">
+
+Elements → Accessibility pane shows role, name, and state. A Performance recording shows Parse HTML, Layout, and Paint entries.
+
+</Card>
+
+---
+
+## 3. Drills
+
+Do these in a `drills/01/` folder. Use plain `.html` files, no build tools. Serve them with `npx serve .` (or just open the file).
+
+<Drill id="d1-pipeline-observation" title="D1. Pipeline observation (30 min)">
+
+Make a page with a big `<script>` (no `defer`) in the `<head>` that runs a busy loop for 3 seconds: `const t = Date.now(); while (Date.now() - t < 3000) {}`. Load it. What do you see during those 3 seconds? Now add `defer`. What changes? Record both in the Performance panel and find the difference.
+
+<Answer>
+
+**Without `defer`:** a blank page (or the previous page) for 3 seconds. The parser stops at the script, so the DOM for `<body>` isn't built and nothing is painted. In the Performance panel you see one ~3000 ms long task (Evaluate Script) *before* the rest of Parse HTML, and First Contentful Paint comes after it.
+
+**With `defer`:** the script downloads in parallel and runs only after the HTML is parsed. The DOM is built first, so the content usually paints before the busy loop starts; then the page is visible but frozen for 3 seconds (clicks and text selection don't respond). In the recording, Parse HTML and the first paint come first, and the 3 s task runs just before `DOMContentLoaded`.
+
+Lesson: `defer` fixes *parser* blocking, not main-thread blocking. A long task still freezes the page.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-div-soup-repair" title="D2. Div-soup repair (45 min)">
+
+Rewrite this so that it's semantic. Then keyboard-test it using only Tab, Shift+Tab, Enter, and Space.
+```html
+<div class="header">
+  <div class="logo" onclick="location='/'">Acme</div>
+  <div class="nav"><div onclick="location='/pricing'">Pricing</div><div onclick="location='/docs'">Docs</div></div>
+</div>
+<div class="content">
+  <div class="big-title">Ship faster</div>
+  <div class="title2">Features</div>
+  <div class="card"><div class="title3">Fast</div><div>Built on edge infra.</div></div>
+  <div class="btn" onclick="signup()">Get started</div>
+</div>
+<div class="footer">© 2026 Acme</div>
+```
+
+<Answer>
+
+```html
+<header>
+  <a href="/">Acme</a>
+  <nav aria-label="Main">
+    <ul>
+      <li><a href="/pricing">Pricing</a></li>
+      <li><a href="/docs">Docs</a></li>
+    </ul>
+  </nav>
+</header>
+<main>
+  <h1>Ship faster</h1>
+  <section>
+    <h2>Features</h2>
+    <article>
+      <h3>Fast</h3>
+      <p>Built on edge infra.</p>
+    </article>
+  </section>
+  <button type="button" onclick="signup()">Get started</button>
+</main>
+<footer>
+  <p>© 2026 Acme</p>
+</footer>
+```
+
+Key moves: navigation (`location=...`) becomes `<a href>`; the action (`signup()`) becomes a `<button>`; the titles become an `<h1>` → `<h2>` → `<h3>` outline; header, nav, main, and footer become landmarks. Keyboard test: Tab now reaches the logo, both nav links, and the button; Enter follows links, and Enter or Space activates the button. In the original, nothing was focusable at all. (If "Get started" actually navigated to a signup page, it would be an `<a href="/signup">` instead.)
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-heading-outline" title="D3. Heading outline (20 min)">
+
+Take any long article on a news site. Open DevTools and run:
+```js
+[...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map(h => '  '.repeat(+h.tagName[1]-1) + h.tagName + ' ' + h.textContent.trim()).join('\n')
+```
+Is the outline sensible? Find a site where it isn't.
+
+<Answer>
+
+A sensible outline has exactly one `<h1>` (the article title), section headings nested below it, and no skipped levels; reading the indented list alone should tell you what the page contains. Common failures you'll find: several `<h1>`s (logo, title, sidebar), skipped levels (h2 → h4), headings used just for big or small text ("Newsletter", "Most read" as `<h4>` widgets), and real section titles marked up as bold `<p>` or `<div>`, so they don't appear at all.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d4-api-key-form" title="D4. The form (60 min)">
+
+Build a **"Create API key"** form: key name (required, 3–40 chars), environment (radio: dev, staging, prod), scopes (checkboxes: read, write, admin), expiry date (`type="date"`, min = today), and an optional description textarea with a 200-character limit. Every control should be labeled and grouped properly, with help text linked by `aria-describedby`. Point it at a tiny Express endpoint that logs `req.body` (use `express.urlencoded()`), so you can see exactly what the browser sends. What's sent for unchecked checkboxes?
+
+<Answer>
+
+```html
+<form action="/api-keys" method="post">
+  <label for="key-name">Key name</label>
+  <input id="key-name" name="name" required minlength="3" maxlength="40"
+         aria-describedby="key-name-hint">
+  <p id="key-name-hint">3–40 characters, e.g. "CI deploy".</p>
+
+  <fieldset>
+    <legend>Environment</legend>
+    <label><input type="radio" name="env" value="dev" checked> Dev</label>
+    <label><input type="radio" name="env" value="staging"> Staging</label>
+    <label><input type="radio" name="env" value="prod"> Prod</label>
+  </fieldset>
+
+  <fieldset aria-describedby="scopes-hint">
+    <legend>Scopes</legend>
+    <p id="scopes-hint">Grant only what the key needs.</p>
+    <label><input type="checkbox" name="scopes" value="read"> Read</label>
+    <label><input type="checkbox" name="scopes" value="write"> Write</label>
+    <label><input type="checkbox" name="scopes" value="admin"> Admin</label>
+  </fieldset>
+
+  <label for="expiry">Expiry date</label>
+  <input id="expiry" name="expiry" type="date" aria-describedby="expiry-hint">
+  <p id="expiry-hint">Leave empty for a key that never expires.</p>
+
+  <label for="description">Description (optional)</label>
+  <textarea id="description" name="description" maxlength="200"
+            aria-describedby="description-hint"></textarea>
+  <p id="description-hint">Up to 200 characters.</p>
+
+  <button type="submit">Create key</button>
+</form>
+<script>
+  // min = today, in local time
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  document.getElementById('expiry').min =
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+</script>
+```
+
+```js
+import express from 'express';
+const app = express();
+app.use(express.urlencoded({ extended: false }));
+app.post('/api-keys', (req, res) => {
+  console.log(req.body);
+  res.send('ok');
+});
+app.listen(3000);
+```
+
+**Unchecked checkboxes send nothing**: the key is missing from the body entirely (not `false`, not empty). A checked box sends its `value` (or `"on"` if it has no `value`). Several checked boxes with the same `name` send repeated keys (`scopes=read&scopes=write`), which Express parses into an array, but a single checked box arrives as a plain string. Your server must handle all three cases. Empty text fields are sent as empty strings.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-screen-reader" title="D5. Screen reader test (30 min)">
+
+Turn on a real screen reader: **Orca** on Linux (`orca`, or Super+Alt+S on GNOME), VoiceOver on Mac, or NVDA on Windows. Navigate your D2 and D4 pages using headings and landmarks. Then try the original div-soup version. Write two sentences about the difference in this module's notebook.
+
+<Answer>
+
+What you should notice: on the semantic pages you can jump by heading (H in Orca/NVDA browse mode) and by landmark, controls are announced with role and name ("Pricing, link", "Get started, button", "Key name, entry, required"), and help text is read when an input gets focus. On the div-soup version there are no headings or landmarks to jump to, nothing is announced as a link or button, and the "links" and "button" can't be reached with Tab, so the page is just a flat stream of text you have to read top to bottom.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-lighthouse" title="D6. Lighthouse (15 min)">
+
+Run Lighthouse (Accessibility + SEO) on your D2 page and fix everything until both score 100.
+
+<Answer>
+
+The usual fixes on a page like D2: add `<!doctype html>`, `<html lang="en">`, a `<title>`, `<meta name="description">`, and the viewport meta (2.3); give every image an `alt`; make sure every link and button has a text name; keep heading levels in order with no skips; give each `<nav>` a distinct label when there are several. Lighthouse lists each failing element, so fix them one by one and re-run until both scores read 100.
+
+</Answer>
+
+</Drill>
+
+---
+
+## 4. Build: "Developer Docs" page (3–4 hrs)
+
+<Build id="build-developer-docs" title="Developer Docs page">
+
+Build a **documentation page for one of your own backend APIs**, in HTML only. Use **zero CSS** this week: no `style` attributes and no `<style>` tags.
+
+That's deliberate. If the page is readable and navigable with no CSS at all, your HTML is right. CSS comes next week and goes on top of this exact page.
+
+Requirements:
+- [ ] Full document skeleton (2.3) with a sensible `<title>` and description
+- [ ] `<header>` with site name (linking home) and `<nav>` for the main sections
+- [ ] A sidebar `<nav aria-label="Table of contents">` with in-page anchor links (`href="#authentication"`)
+- [ ] `<main>` with a correct heading hierarchy: Introduction, Authentication, a section per endpoint (method, path, description), Errors, Rate limits
+- [ ] At least one `<table>` (e.g., an error codes table) with `<caption>` and `<th scope>`
+- [ ] Code samples in `<pre><code>`
+- [ ] At least one `<dl>` (e.g., request parameters: name → description)
+- [ ] An image or diagram with good `alt` text
+- [ ] A "Try it" `<form>` for one endpoint that really submits to your Express server
+- [ ] `<footer>`
+- [ ] Lighthouse Accessibility = 100
+- [ ] It works fully with keyboard and with Orca
+
+Put it in a GitHub repo (`frontend-journey`), because you'll keep upgrading this page in Modules 02–04.
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-pipeline-order" type="order" answer="dom,cssom,style,layout,paint,composite">
+
+Put the rendering pipeline stages in order, from the HTML bytes arriving to pixels on screen.
+
+<Step id="dom">Parse HTML → DOM</Step>
+<Step id="cssom">Parse CSS → CSSOM</Step>
+<Step id="style">Style calculation (computed styles)</Step>
+<Step id="layout">Layout (reflow)</Step>
+<Step id="paint">Paint</Step>
+<Step id="composite">Composite</Step>
+
+<Why>DOM and CSSOM feed style calculation, which feeds layout, paint, and finally GPU compositing. See [2.1](#21-from-url-to-pixels).</Why>
+
+</Quiz>
+
+<Quiz id="q-defer-vs-async" type="mcq" answer="b">
+
+Your app has `vendor.js` and `app.js`, and `app.js` depends on `vendor.js`. Both should download without blocking the parser. Which attribute should both script tags use?
+
+<Choice id="a">`async`: they download in parallel and run as soon as each is ready</Choice>
+<Choice id="b">`defer`: they download in parallel and run after parsing, in document order</Choice>
+<Choice id="c">No attribute; just put them in the `<head>`</Choice>
+<Choice id="d">`async` on `vendor.js` and `defer` on `app.js`</Choice>
+
+<Why>`async` scripts run in whatever order they finish downloading, so a dependency could run second. `defer` preserves document order. See [2.1](#21-from-url-to-pixels).</Why>
+
+</Quiz>
+
+<Quiz id="q-composite-only" type="multi" answer="b,c">
+
+Which property changes can skip layout and paint and go straight to composite?
+
+<Choice id="a">`width`</Choice>
+<Choice id="b">`transform`</Choice>
+<Choice id="c">`opacity`</Choice>
+<Choice id="d">`margin-top`</Choice>
+
+<Why>`width` and `margin-top` change geometry, so layout, paint, and composite all re-run. `transform` and `opacity` can be handled by the compositor alone. See [2.1](#21-from-url-to-pixels).</Why>
+
+</Quiz>
+
+<Quiz id="q-formdata-output" type="output" answer="email=a%40b.co&news=on||email=a@b.co&news=on">
+
+What does this log?
+
+```js
+document.body.innerHTML = `
+  <form>
+    <input name="email" value="a@b.co">
+    <input value="ignored">
+    <input type="checkbox" name="terms">
+    <input type="checkbox" name="news" checked>
+  </form>`;
+const form = document.querySelector('form');
+console.log(new URLSearchParams(new FormData(form)).toString());
+```
+
+<Why>The input without a `name` isn't submitted, the unchecked checkbox sends nothing, a checked checkbox without a `value` sends `on`, and `@` is percent-encoded as `%40`. See [2.5](#25-forms-your-backend-instincts-apply-here).</Why>
+
+</Quiz>
+
+<Quiz id="q-login-form-bug" type="bug" line="5">
+
+The server receives the email but never the password. Which line is the bug?
+
+```html
+<form action="/api/login" method="post">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" autocomplete="email" required>
+  <label for="pw">Password</label>
+  <input id="pw" type="password" autocomplete="current-password" required>
+  <button type="submit">Log in</button>
+</form>
+```
+
+<Why>The password input has no `name`, and an input without a `name` isn't submitted. See [2.5](#25-forms-your-backend-instincts-apply-here).</Why>
+
+</Quiz>
+
+<Quiz id="q-viewport-blank" type="blank" answer="width=device-width">
+
+Fill in the blank so phones lay the page out at their real width instead of ~980px.
+
+```html
+<meta name="viewport" content="___, initial-scale=1">
+```
+
+<Why>Without `width=device-width`, phones render at ~980px wide and zoom out. See [2.3](#23-the-document-skeleton).</Why>
+
+</Quiz>
+
+<Quiz id="q-alt-decorative" type="mcq" answer="c">
+
+A purely decorative divider image should be marked up as:
+
+<Choice id="a">`<img src="divider.svg">` (no `alt`)</Choice>
+<Choice id="b">`<img src="divider.svg" alt="divider">`</Choice>
+<Choice id="c">`<img src="divider.svg" alt="">`</Choice>
+<Choice id="d">`<img src="divider.svg" alt="decorative image">`</Choice>
+
+<Why>Empty `alt=""` explicitly says "decorative", so screen readers skip it. A missing `alt` may make the screen reader read the filename. See [2.4](#24-semantic-html-elements-are-contracts).</Why>
+
+</Quiz>
+
+<Quiz id="q-landmarks" type="multi" answer="a,b,c,e">
+
+Which elements create landmarks that screen-reader users can jump between (when used at the top level of the page)?
+
+<Choice id="a">`<header>`</Choice>
+<Choice id="b">`<nav>`</Choice>
+<Choice id="c">`<main>`</Choice>
+<Choice id="d">`<div>`</Choice>
+<Choice id="e">`<footer>`</Choice>
+<Choice id="f">`<span>`</Choice>
+
+<Why>`<div>` and `<span>` are the "no meaning" elements. Header, nav, main, aside, and footer are landmarks. See [2.4](#24-semantic-html-elements-are-contracts).</Why>
+
+</Quiz>
+
+<Quiz id="q-link-or-button" type="mcq" answer="a">
+
+A "View invoice" control takes the user to `/invoices/42`. What should it be?
+
+<Choice id="a">`<a href="/invoices/42">View invoice</a>`</Choice>
+<Choice id="b">`<button onclick="location='/invoices/42'">View invoice</button>`</Choice>
+<Choice id="c">`<div role="button" tabindex="0">View invoice</div>`</Choice>
+<Choice id="d">`<a onclick="location='/invoices/42'">View invoice</a>`</Choice>
+
+<Why>Something that goes somewhere is a link with an `href`. That gives open in new tab, copy link, middle-click, visited state, and the "link" role. See [2.4](#24-semantic-html-elements-are-contracts).</Why>
+
+</Quiz>
+
+<Quiz id="q-div-button-explain" type="explain">
+
+A teammate made a "Delete" control with a `<div>` and an `onclick` handler. Explain what's broken, and why the fix is a native element rather than adding ARIA.
+
+<Model>
+
+The `<div>` has no role, isn't focusable with Tab, doesn't activate with Enter or Space, can't be `disabled`, and isn't announced as a button, so keyboard and screen-reader users can't use it. Patching it needs `role="button"`, `tabindex="0"`, and key handlers: re-implementing a built-in badly. The first rule of ARIA is not to use ARIA when a native element does the job, so use `<button type="button">`.
+
+</Model>
+
+<Why>See the interactive elements rules in [2.4](#24-semantic-html-elements-are-contracts) and the first rule of ARIA in [2.6](#26-the-accessibility-tree).</Why>
+
+</Quiz>
+
+---
+
+## 5. Checkpoint
+
+Answer these out loud, without notes. If you get stuck on one, re-read that section.
+
+<Checkpoint>
+<Ask id="cp-bytes-to-pixels" q="Walk through what happens from receiving HTML bytes to pixels on screen. Name each stage." section="21-from-url-to-pixels">
+
+The parser streams HTML into the DOM, discovering subresources (CSS, scripts, images) along the way; CSS is parsed into the CSSOM. Style calculation computes every property for every element. Layout computes each box's geometry. Paint fills in pixels in layers. Composite has the GPU stack the layers into the frame.
+
+</Ask>
+<Ask id="cp-blocking" q="Why is CSS render-blocking? Why is a plain <script> parser-blocking? What do defer and async each do?" section="21-from-url-to-pixels">
+
+CSS blocks rendering so you don't see a flash of unstyled content. A plain script blocks the parser because it might change the DOM (`document.write`), so parsing stops while it downloads and runs. `defer`: download in parallel, run after parsing, in order. `async`: download in parallel, run as soon as ready, in any order.
+
+</Ask>
+<Ask id="cp-main-thread" q="Why does a 300 ms synchronous JS function make the page unresponsive? What's the Node equivalent?" section="22-the-main-thread-and-the-frame-budget">
+
+The main thread is single-threaded and shared by JS and rendering. A frame needs to be done in ~16.7 ms; while the function runs, no input is handled and nothing is rendered for 300 ms. It's the same as CPU-heavy sync work in an Express handler blocking the event loop for every request.
+
+</Ask>
+<Ask id="cp-width-transform" q="Changing width versus changing transform: which pipeline stages does each one re-trigger?" section="21-from-url-to-pixels">
+
+`width` re-runs layout → paint → composite (expensive). `transform` (like `opacity`) can skip straight to composite (cheap).
+
+</Ask>
+<Ask id="cp-button-vs-a" q="When do you use <button> and when <a>? List four things <button> gives you that <div onclick> doesn't." section="24-semantic-html-elements-are-contracts">
+
+Button for actions, `<a href>` for going somewhere. A button is focusable with Tab, activates with Enter and Space, is announced as "button" with its label, can be `disabled`, and submits its form.
+
+</Ask>
+<Ask id="cp-a11y-tree" q="What is the accessibility tree? What are role, name, and state? What's the first rule of ARIA?" section="26-the-accessibility-tree">
+
+A tree built alongside the DOM that screen readers, voice control, and AI agents read. Role = what it is (button, link, heading); name = its label (from text, `<label>`, `alt`, `aria-label`); state = disabled, checked, expanded, etc. First rule of ARIA: don't use ARIA if a native element does the job.
+
+</Ask>
+<Ask id="cp-placeholder-name" q="Why is placeholder not a label? What does the name attribute do?" section="25-forms-your-backend-instincts-apply-here">
+
+A placeholder disappears when you type and often has poor contrast, and doesn't give the click-to-focus behavior of a `<label>`. `name` is the field's key in the submitted request body; inputs without one aren't submitted.
+
+</Ask>
+<Ask id="cp-alt" q="What's the difference between alt=&quot;&quot; and a missing alt?" section="24-semantic-html-elements-are-contracts">
+
+`alt=""` explicitly marks the image as decorative, so screen readers skip it. A missing `alt` leaves it unknown, and the screen reader may read the filename.
+
+</Ask>
+<Ask id="cp-img-dimensions" q="Why should <img> have width and height?" section="24-semantic-html-elements-are-contracts">
+
+So the browser can reserve the space before the image loads, preventing layout shift (a Core Web Vital).
+
+</Ask>
+<Ask id="cp-viewport" q="What does the viewport meta tag do, and what happens without it?" section="23-the-document-skeleton">
+
+It makes the page lay out at the device's width (`width=device-width, initial-scale=1`). Without it, phones render at ~980px wide and zoom out, and responsive design doesn't work.
+
+</Ask>
+</Checkpoint>
+
+---
+
+## 6. Resources
+
+**Required**
+
+<Resource href="https://web.dev/learn/html" type="course" time="4h" required>web.dev: Learn HTML (read Overview, Document structure, Semantic HTML, Headings and sections, Links, Lists, Images, Tables, Forms)</Resource>
+<Resource href="https://web.dev/articles/critical-rendering-path" type="article" time="30m" required>web.dev: Critical rendering path</Resource>
+
+**Recommended**
+
+<Resource href="https://developer.chrome.com/blog/inside-browser-part1" type="article" time="1h">Chrome Developers: Inside look at modern web browser (a 4-part series). Read parts 1–3 now; part 4 matters in Module 05.</Resource>
+<Resource href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element" type="docs" time="30m">MDN: HTML elements reference. Skim the whole list once to learn what exists.</Resource>
+
+---
+
+**Next:** Module 02, CSS Fundamentals. We'll style your docs page and learn why CSS behaves the way it does.

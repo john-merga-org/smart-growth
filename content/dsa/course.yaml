@@ -1,0 +1,198 @@
+title: "Data Structures & Algorithms: Backend Engineer → Interview-Ready"
+type: course
+summary: Real understanding of every core data structure and algorithm, plus FAANG-level interview performance, in Python, at 4–5 hours a week.
+hoursPerWeek: 5
+labels: { part: Phase, unit: Module }
+overview: overview.mdx
+
+timeline:
+  - month: 3
+    expect: "Solve most easy problems alone and recognize the basic patterns: hashing, two pointers, sliding window, prefix sums"
+  - month: 6
+    expect: Solve easy problems quickly and about half of mediums alone. Explain how every core data structure works internally
+  - month: 9
+    expect: Solve most mediums in ~30–35 min, including graphs and DP. Pass a mid-level interview on a good day
+  - month: 12
+    expect: Solve mediums in ~25 min while talking, make real progress on hards, and pass FAANG-style mocks consistently
+
+parts:
+  - id: phase-1-foundations
+    title: Foundations
+    goal: Read and write Python fluently, analyze the complexity of any code you write, and solve easy problems with the basic array and hashing patterns.
+    units:
+      - id: "00"
+        title: Python for DSA (for a TypeScript dev)
+        weeks: 1
+        outcome: You write idiomatic Python and know what every built-in operation costs
+        file: phase-1-foundations/00-python-for-dsa.mdx
+        skills: [python, big-o]
+      - id: "01"
+        title: Big-O and Complexity Analysis
+        weeks: 1.5
+        outcome: You can state the time and space complexity of any code, including recursion, and pick a target complexity from the constraints
+        file: phase-1-foundations/01-big-o-complexity.mdx
+        skills: [big-o]
+      - id: "02"
+        title: "Arrays and strings: dynamic arrays, in-place edits, 2D grids, string building"
+        weeks: 1.5
+        outcome: You can manipulate arrays and matrices in place and know why string building needs care
+        skills: [arrays, strings, matrix]
+      - id: "03"
+        title: "Hash maps and sets: hashing, collisions, resizing, counting, grouping"
+        weeks: 1.5
+        outcome: You've built your own hash map, and "can a hash map make this O(n)?" is your first instinct
+        skills: [hashing]
+      - id: "04"
+        title: "Two pointers: opposite ends, fast/slow, read/write pointers"
+        weeks: 1.5
+        outcome: You turn O(n²) pair searches on sorted data into O(n)
+        skills: [two-pointers]
+      - id: "05"
+        title: "Sliding window: fixed and variable windows"
+        weeks: 1.5
+        outcome: You solve "longest/shortest subarray or substring such that..." problems in O(n)
+        skills: [sliding-window]
+      - id: "06"
+        title: "Prefix sums: 1D, 2D, prefix sum + hash map"
+        weeks: 1
+        outcome: You answer range queries in O(1) and count subarrays with a target sum
+        skills: [prefix-sums, hashing]
+      - id: "07"
+        title: "Recursion basics: call stack, base cases, recursion on lists and strings"
+        weeks: 1.5
+        outcome: You trust recursion, can trace it, and know its stack cost
+        skills: [recursion]
+      - id: milestone-1
+        kind: milestone
+        title: "Milestone 1: Phase 1 timed set + dsalib started (DynamicArray, HashMap)"
+        weeks: 1
+        outcome: You can prove the foundations hold under time pressure
+        skills: [timed-practice, arrays, hashing]
+
+  - id: phase-2-data-structures
+    title: Core Data Structures
+    goal: Implement every core data structure from scratch, and solve easy and medium problems that use them.
+    units:
+      - id: "08"
+        title: "Linked lists: singly and doubly linked, dummy nodes, reversal, fast/slow pointers"
+        weeks: 1.5
+        outcome: Pointer manipulation without bugs. You can reverse a list in your sleep
+        skills: [linked-list, two-pointers]
+      - id: "09"
+        title: "Stacks and queues: deque, ring buffer, monotonic stack, monotonic queue"
+        weeks: 1.5
+        outcome: You recognize "next greater element" problems and solve them in O(n)
+        skills: [stack, queue, monotonic-stack]
+      - id: "10"
+        title: "Binary search: the template, boundaries, rotated arrays, binary search on the answer"
+        weeks: 2
+        outcome: Correct binary search on the first try, and you can spot hidden binary search problems
+        skills: [binary-search]
+      - id: "11"
+        title: "Sorting: merge sort, quicksort, quickselect, counting/bucket sort, stability, custom keys"
+        weeks: 1.5
+        outcome: You know how sorting works and when O(n log n) can be beaten
+        skills: [sorting, quickselect]
+      - id: "12"
+        title: "Trees and BSTs: traversals (recursive and iterative), BFS by level, BST operations, tree DP basics"
+        weeks: 2.5
+        outcome: Tree problems become "what does each node return to its parent?"
+        skills: [trees, bst, dfs, bfs]
+      - id: "13"
+        title: "Heaps and priority queues: binary heap internals, top-k, k-way merge, two heaps"
+        weeks: 1.5
+        outcome: You've built a heap and use one whenever you need "the best item so far"
+        skills: [heap, top-k]
+      - id: milestone-2
+        kind: milestone
+        title: "Milestone 2: dsalib core complete with tests + mixed timed set + first mock interview"
+        weeks: 1.5
+        outcome: Your own data structure library, and your first interview under pressure
+        skills: [timed-practice, mock-interview]
+
+  - id: phase-3-algorithms
+    title: Core Algorithms
+    goal: "Handle the topics that separate \"can code\" from \"passes interviews\": backtracking, graphs, and DP."
+    units:
+      - id: "14"
+        title: "Recursion and backtracking: subsets, permutations, combinations, pruning, grids"
+        weeks: 2
+        outcome: One template that solves every "generate all..." problem
+        skills: [backtracking, recursion]
+      - id: "15"
+        title: "Graphs I: representations, BFS/DFS, grids as graphs, cycle detection, topological sort"
+        weeks: 2.5
+        outcome: You model problems as graphs and traverse them correctly
+        skills: [graphs, bfs, dfs, topological-sort]
+      - id: "16"
+        title: "Graphs II: union-find, Dijkstra, multi-source BFS, shortest paths on grids"
+        weeks: 1.5
+        outcome: You pick the right shortest-path and connectivity tool
+        skills: [graphs, union-find, shortest-path]
+      - id: "17"
+        title: "Dynamic programming I: memoization → tabulation, 1D DP, state design"
+        weeks: 2
+        outcome: "A repeatable recipe: state → recurrence → base case → order → optimize space"
+        skills: [dp]
+      - id: "18"
+        title: "Dynamic programming II: 2D grids, knapsack (0/1 and unbounded), subsequences (LCS, LIS, edit distance), interval DP"
+        weeks: 3
+        outcome: You can classify a DP problem and write the recurrence before coding
+        skills: [dp, knapsack]
+      - id: "19"
+        title: "Greedy: exchange arguments, when greedy works and when it fails"
+        weeks: 1.5
+        outcome: You can justify a greedy choice or know when to reach for DP instead
+        skills: [greedy]
+      - id: "20"
+        title: "Intervals: sorting by start/end, merging, sweep line, meeting rooms"
+        weeks: 1
+        outcome: Interval problems reduce to "sort, then sweep"
+        skills: [intervals, sorting]
+      - id: milestone-3
+        kind: milestone
+        title: "Milestone 3: Graphs in dsalib + LeetCode contest-style timed sets + 2 mock interviews"
+        weeks: 1.5
+        outcome: Mid-level interview ready
+        skills: [graphs, timed-practice, mock-interview]
+
+  - id: phase-4-interview-mastery
+    title: Advanced + Interview Mastery
+    goal: Cover the remaining topics, then turn knowledge into consistent interview performance.
+    units:
+      - id: "21"
+        title: "Tries: prefix trees, autocomplete, word search"
+        weeks: 1
+        outcome: You can build a trie from scratch in 5 minutes
+        skills: [trie]
+      - id: "22"
+        title: "Bit manipulation: masks, XOR tricks, bitmask state"
+        weeks: 0.5
+        outcome: Bit problems stop looking like magic
+        skills: [bit-manipulation]
+      - id: "23"
+        title: Segment trees and Fenwick trees (light)
+        weeks: 1
+        outcome: You know when range queries with updates need them, and can write a Fenwick tree
+        skills: [segment-tree, fenwick-tree]
+      - id: "24"
+        title: "Advanced graphs: MST (Kruskal, Prim), Bellman-Ford, Floyd-Warshall overview"
+        weeks: 1
+        outcome: The full shortest-path and spanning-tree toolbox
+        skills: [graphs, mst, shortest-path]
+      - id: "25"
+        title: "Design problems: LRU, LFU, rate limiters, iterators, time-based key-value store"
+        weeks: 1.5
+        outcome: Backend-flavored problems become your strongest category
+        skills: [design, hashing, linked-list]
+      - id: "26"
+        title: "Interview mastery: communication framework, timed practice, mock interviews, review"
+        weeks: 3
+        outcome: You perform consistently, not just on good days
+        skills: [mock-interview, timed-practice]
+      - id: capstone
+        kind: milestone
+        title: "Capstone: mini-Redis in Python (TTL via heap, LRU eviction, sliding-window rate limiter, prefix scan via trie) + 3 consecutive passing mocks"
+        weeks: 2
+        outcome: You've proven both real skill and interview readiness
+        skills: [design, heap, trie, sliding-window, mock-interview]
