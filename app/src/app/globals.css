@@ -1,0 +1,124 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --muted: #f1f1ef;
+  --line: #e4e4e0;
+  --ink: #1d1d1b;
+  --ink-2: #4a4a46;
+  --ink-3: #8a8a84;
+  --accent: #4f46e5;
+  --accent-fg: #ffffff;
+  --good: #15803d;
+  --bad: #dc2626;
+  --warn: #b45309;
+  --hl-key: rgb(250 204 21 / 0.45);
+  --hl-confused: rgb(248 113 113 / 0.45);
+  --hl-aha: rgb(74 222 128 / 0.45);
+  --hl-interview: rgb(96 165 250 / 0.45);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141414;
+    --surface: #1c1c1b;
+    --muted: #262625;
+    --line: #34342f;
+    --ink: #ececea;
+    --ink-2: #c4c4bf;
+    --ink-3: #8f8f88;
+    --accent: #8b85ff;
+    --accent-fg: #111111;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --hl-key: rgb(250 204 21 / 0.3);
+    --hl-confused: rgb(248 113 113 / 0.35);
+    --hl-aha: rgb(74 222 128 / 0.3);
+    --hl-interview: rgb(96 165 250 / 0.35);
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-good: var(--good);
+  --color-bad: var(--bad);
+  --color-warn: var(--warn);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* Lesson typography tuned to the tokens */
+.prose {
+  --tw-prose-body: var(--ink-2);
+  --tw-prose-headings: var(--ink);
+  --tw-prose-links: var(--accent);
+  --tw-prose-bold: var(--ink);
+  --tw-prose-code: var(--ink);
+  --tw-prose-quotes: var(--ink-2);
+  --tw-prose-th-borders: var(--line);
+  --tw-prose-td-borders: var(--line);
+  --tw-prose-hr: var(--line);
+  --tw-prose-bullets: var(--ink-3);
+  --tw-prose-counters: var(--ink-3);
+}
+.prose :where(h2, h3) { scroll-margin-top: 5rem; }
+.prose :where(code):not(:where(pre *))::before,
+.prose :where(code):not(:where(pre *))::after { content: none; }
+.prose :where(code):not(:where(pre *)) {
+  background: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.3rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.prose table { display: block; overflow-x: auto; }
+
+/* Shiki dual themes (defaultColor: false → CSS variables) */
+.shiki, .shiki span { color: var(--shiki-light); background-color: var(--shiki-light-bg); }
+@media (prefers-color-scheme: dark) {
+  .shiki, .shiki span { color: var(--shiki-dark); background-color: var(--shiki-dark-bg); }
+}
+pre.shiki {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+/* Bug quizzes */
+.quiz-line-clickable { cursor: pointer; display: inline-block; width: 100%; border-radius: 3px; }
+.quiz-line-clickable:hover { outline: 1px dashed var(--ink-3); }
+.quiz-line-selected { outline: 2px solid var(--accent) !important; display: inline-block; width: 100%; }
+.quiz-line-correct { background: color-mix(in srgb, var(--good) 22%, transparent) !important; display: inline-block; width: 100%; }
+
+/* Highlights (CSS Custom Highlight API: no DOM mutation inside React-managed content) */
+::highlight(hl-key) { background-color: var(--hl-key); }
+::highlight(hl-confused) { background-color: var(--hl-confused); }
+::highlight(hl-aha) { background-color: var(--hl-aha); }
+::highlight(hl-interview) { background-color: var(--hl-interview); }
+::highlight(hl-focus) { background-color: var(--accent); color: var(--accent-fg); }
+
+/* Any code block scrolls horizontally instead of widening the page (phones). */
+pre { overflow-x: auto; max-width: 100%; }
