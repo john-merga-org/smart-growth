@@ -4,6 +4,8 @@ import { boolean, index, integer, jsonb, pgTable, primaryKey, real, serial, text
 /**
  * User activity only — content lives in git (design §1).
  * Single user today, but every table carries user_id so multi-user is a migration, not a rewrite.
+ * Every table has RLS on with no policies: Supabase's Data API (anon/authenticated roles) sees nothing,
+ * while the app connects as the table owner, which RLS doesn't apply to. New tables need .enableRLS() too.
  */
 const userId = () => text("user_id").notNull().default("me");
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -14,13 +16,13 @@ export const settings = pgTable("settings", {
   dailyResolveCap: integer("daily_resolve_cap").notNull().default(4),
   dailyCardCap: integer("daily_card_cap").notNull().default(20),
   aiMonthlyCapUsd: real("ai_monthly_cap_usd").notNull().default(10),
-});
+}).enableRLS();
 
 export const courseState = pgTable("course_state", {
   userId: userId(),
   courseId: text("course_id").notNull(),
   startedOn: text("started_on"), // Day
-}, (t) => [primaryKey({ columns: [t.userId, t.courseId] })]);
+}, (t) => [primaryKey({ columns: [t.userId, t.courseId] })]).enableRLS();
 
 export const unitProgress = pgTable("unit_progress", {
   userId: userId(),
@@ -32,7 +34,7 @@ export const unitProgress = pgTable("unit_progress", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
   milestoneScore: text("milestone_score"),
   milestoneNotes: text("milestone_notes"),
-}, (t) => [primaryKey({ columns: [t.userId, t.courseId, t.unitId] })]);
+}, (t) => [primaryKey({ columns: [t.userId, t.courseId, t.unitId] })]).enableRLS();
 
 export const sectionReads = pgTable("section_reads", {
   userId: userId(),
@@ -40,7 +42,7 @@ export const sectionReads = pgTable("section_reads", {
   unitId: text("unit_id").notNull(),
   sectionId: text("section_id").notNull(),
   readAt: createdAt(),
-}, (t) => [primaryKey({ columns: [t.userId, t.courseId, t.unitId, t.sectionId] })]);
+}, (t) => [primaryKey({ columns: [t.userId, t.courseId, t.unitId, t.sectionId] })]).enableRLS();
 
 /** Drill commits, quiz answers, checkpoint self-grades. Append-only history; latest row wins. */
 export const responses = pgTable("responses", {
@@ -51,7 +53,7 @@ export const responses = pgTable("responses", {
   response: jsonb("response"),
   correct: boolean("correct"),
   createdAt: createdAt(),
-}, (t) => [index("responses_block_idx").on(t.userId, t.blockKey)]);
+}, (t) => [index("responses_block_idx").on(t.userId, t.blockKey)]).enableRLS();
 
 /** One row per DSA problem: its place on the re-solve ladder (srs/ladder.ts). */
 export const problems = pgTable("problems", {
@@ -70,7 +72,7 @@ export const problems = pgTable("problems", {
   due: text("due"), // Day
   firstSolvedOn: text("first_solved_on"),
   retiredOn: text("retired_on"),
-}, (t) => [primaryKey({ columns: [t.userId, t.key] })]);
+}, (t) => [primaryKey({ columns: [t.userId, t.key] })]).enableRLS();
 
 export const attempts = pgTable("attempts", {
   id: serial("id").primaryKey(),
@@ -93,7 +95,7 @@ export const attempts = pgTable("attempts", {
   flags: text("flags").array().notNull().default(sql`'{}'::text[]`),
   timeMs: integer("time_ms"),
   notes: text("notes"),
-}, (t) => [index("attempts_problem_idx").on(t.userId, t.problemKey), index("attempts_open_idx").on(t.userId, t.endedAt)]);
+}, (t) => [index("attempts_problem_idx").on(t.userId, t.problemKey), index("attempts_open_idx").on(t.userId, t.endedAt)]).enableRLS();
 
 export const mistakes = pgTable("mistakes", {
   id: serial("id").primaryKey(),
@@ -105,7 +107,7 @@ export const mistakes = pgTable("mistakes", {
   what: text("what").notNull(),
   rule: text("rule").notNull(),
   createdAt: createdAt(),
-});
+}).enableRLS();
 
 /** FSRS review cards: concept cards, wrong quiz answers, failed checkpoint asks, highlight cards. */
 export const cards = pgTable("cards", {
@@ -121,7 +123,7 @@ export const cards = pgTable("cards", {
   fsrs: jsonb("fsrs").notNull(),
   suspended: boolean("suspended").notNull().default(false),
   createdAt: createdAt(),
-}, (t) => [uniqueIndex("cards_source_idx").on(t.userId, t.sourceKey), index("cards_due_idx").on(t.userId, t.due)]);
+}, (t) => [uniqueIndex("cards_source_idx").on(t.userId, t.sourceKey), index("cards_due_idx").on(t.userId, t.due)]).enableRLS();
 
 export const reviewLogs = pgTable("review_logs", {
   id: serial("id").primaryKey(),
@@ -131,7 +133,7 @@ export const reviewLogs = pgTable("review_logs", {
   wasDue: timestamp("was_due", { withTimezone: true }),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull().defaultNow(),
   reviewedOn: text("reviewed_on").notNull(),
-}, (t) => [index("review_logs_day_idx").on(t.userId, t.reviewedOn)]);
+}, (t) => [index("review_logs_day_idx").on(t.userId, t.reviewedOn)]).enableRLS();
 
 export const highlights = pgTable("highlights", {
   id: serial("id").primaryKey(),
@@ -147,7 +149,7 @@ export const highlights = pgTable("highlights", {
   orphan: boolean("orphan").notNull().default(false),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }), // for "confused" → Struggles log
   createdAt: createdAt(),
-}, (t) => [index("highlights_unit_idx").on(t.userId, t.courseId, t.unitId)]);
+}, (t) => [index("highlights_unit_idx").on(t.userId, t.courseId, t.unitId)]).enableRLS();
 
 export const notes = pgTable("notes", {
   id: serial("id").primaryKey(),
@@ -160,7 +162,7 @@ export const notes = pgTable("notes", {
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 export const resources = pgTable("resources", {
   userId: userId(),
@@ -171,7 +173,7 @@ export const resources = pgTable("resources", {
   unitId: text("unit_id"),
   status: text("status").notNull(), // done | saved
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [primaryKey({ columns: [t.userId, t.href] })]);
+}, (t) => [primaryKey({ columns: [t.userId, t.href] })]).enableRLS();
 
 export const mocks = pgTable("mocks", {
   id: serial("id").primaryKey(),
@@ -183,7 +185,7 @@ export const mocks = pgTable("mocks", {
   brokeDown: text("broke_down"),
   fix: text("fix"),
   createdAt: createdAt(),
-});
+}).enableRLS();
 
 /** Study-time log for the dashboard: one row per finished activity. */
 export const activity = pgTable("activity", {
@@ -194,4 +196,4 @@ export const activity = pgTable("activity", {
   day: text("day").notNull(),
   minutes: real("minutes").notNull().default(0),
   createdAt: createdAt(),
-}, (t) => [index("activity_day_idx").on(t.userId, t.day)]);
+}, (t) => [index("activity_day_idx").on(t.userId, t.day)]).enableRLS();

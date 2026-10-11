@@ -19,7 +19,8 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 | 8 | Checkpoint flow + soft gate | ✅ | `src/components/blocks/practice.tsx`, `courseSummary()` in `src/lib/server/learn.ts` |
 | 9 | Progress page (replaces PROGRESS.md) | ✅ | `/progress`, `src/lib/server/progress.ts` |
 | 10 | Content migration: DSA 00, DSA 01, Frontend 01 → MDX; README → `course.yaml` + `overview.mdx` | ✅ | `content/` |
-| — | Deploy to Vercel + Supabase | ⬜ needs the user's accounts | `app/README.md` |
+| — | Deploy to Vercel + Supabase | 🟡 Supabase project created; `next start` works locally against it. Vercel next | `app/README.md` |
+| — | RLS on every table (locks out Supabase's Data API) | ✅ | `src/lib/db/schema.ts`, `drizzle/0001_enable_rls.sql` |
 
 ## How it was verified (2026-10-09)
 
@@ -65,10 +66,12 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 - Grading happens in the browser. That's acceptable for a single user.
 - Push notifications aren't wired up yet (v1.5). The timer uses the browser Notification API while its tab is open.
 - Milestone pages show a placeholder until exam mode arrives (v2).
+- Every new table needs `.enableRLS()`, or Supabase's Data API can read and write it with the public anon key.
+- `DATABASE_URL` must be Supabase's **transaction pooler** URL (port 6543). The direct `db.<ref>.supabase.co:5432` host is IPv6-only and fails with `ENETUNREACH` on IPv4 networks and on Vercel.
 
 ## Next up
 
-1. **Deploy:** the user creates Supabase and Vercel accounts, then follows `app/README.md`.
+1. **Deploy:** the Supabase project exists. Next, the user imports the repo into Vercel and follows `app/README.md`.
 2. **v1.5:**
    - `ArrayViz` + `CallStackViz` steppers (needed from Module 02 on)
    - Sandpack `<Playground>`
@@ -85,3 +88,8 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 - Scaffolded `app/` (Next.js 16.4, React 19, Tailwind 4, Drizzle, PGlite, ts-fsrs).
 - Converted the three existing modules plus both READMEs to MDX and `course.yaml` (done by 3 parallel agents, following the CLAUDE.md authoring spec).
 - Built all of v1 (items 1–10) and verified it as described above.
+
+### 2026-10-11
+- Repo moved to `~/Documents/work/john/smart-growth`; Claude memory and the previous session were copied to the new project path.
+- Created the Supabase project. Local `npm run start` first failed with `ENETUNREACH` because `.env` had the IPv6-only direct URL; it works with the transaction pooler URL.
+- Added `.enableRLS()` to all 15 tables, plus migration `0001_enable_rls.sql`, with no policies. Supabase's `anon`/`authenticated` roles get nothing through the Data API, while the app, which connects as the table owner, isn't affected. Checked in PGlite: the owner can read and write; a role with full table grants reads 0 rows and its inserts are rejected. `tsc` is clean and all 26 tests pass.
