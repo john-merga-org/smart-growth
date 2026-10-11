@@ -2,7 +2,7 @@
 
 A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFORM_DESIGN.md). Update it at the end of every work session: what's done, what's next, and every place the build deviates from the design.
 
-**Current target:** v1 is built and working locally. Next: deploy, then v1.5 (see "Next up").
+**Current target:** v1 is deployed (Vercel + Supabase). Next: v1.5 (see "Next up").
 
 ## Status
 
@@ -19,7 +19,7 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 | 8 | Checkpoint flow + soft gate | ✅ | `src/components/blocks/practice.tsx`, `courseSummary()` in `src/lib/server/learn.ts` |
 | 9 | Progress page (replaces PROGRESS.md) | ✅ | `/progress`, `src/lib/server/progress.ts` |
 | 10 | Content migration: DSA 00, DSA 01, Frontend 01 → MDX; README → `course.yaml` + `overview.mdx` | ✅ | `content/` |
-| — | Deploy to Vercel + Supabase | 🟡 Deployed to Vercel; the first deploy failed after login (migrations missing), fixed, redeploy pending | `app/README.md` |
+| — | Deploy to Vercel + Supabase | ✅ Live on Vercel with Supabase (2026-10-11) | `app/README.md` |
 | — | RLS on every table (locks out Supabase's Data API) | ✅ | `src/lib/db/schema.ts`, `drizzle/0001_enable_rls.sql` |
 
 ## How it was verified (2026-10-09)
@@ -72,14 +72,13 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 
 ## Next up
 
-1. **Deploy:** the Supabase project exists. Next, the user imports the repo into Vercel and follows `app/README.md`.
-2. **v1.5:**
+1. **v1.5:**
    - `ArrayViz` + `CallStackViz` steppers (needed from Module 02 on)
    - Sandpack `<Playground>`
    - AI hint ladder, explain-this, and solution review (Anthropic SDK, with the monthly cap from Settings)
    - Web push notifications
    - In-lesson surprise questions
-3. **Content:** write DSA Module 02 and Frontend Module 02 in the CLAUDE.md format.
+2. **Content:** write DSA Module 02 and Frontend Module 02 in the CLAUDE.md format.
 
 ## Log
 
@@ -95,3 +94,4 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 - Created the Supabase project. Local `npm run start` first failed with `ENETUNREACH` because `.env` had the IPv6-only direct URL; it works with the transaction pooler URL.
 - Added `.enableRLS()` to all 15 tables, plus migration `0001_enable_rls.sql`, with no policies. Supabase's `anon`/`authenticated` roles get nothing through the Data API, while the app, which connects as the table owner, isn't affected. Checked in PGlite: the owner can read and write; a role with full table grants reads 0 rows and its inserts are rejected. `tsc` is clean and all 26 tests pass.
 - First Vercel deploy: after login it threw `Can't find meta/_journal.json file`. `drizzle/` wasn't in the function bundle because the runtime path is hidden from file tracing. Added `./drizzle/**/*` to `outputFileTracingIncludes`; `next build` now lists all migration files in the page's `.nft.json`.
+- Redeployed; login and the DB work on Vercel. v1 is live.
