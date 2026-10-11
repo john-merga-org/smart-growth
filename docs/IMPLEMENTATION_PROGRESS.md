@@ -19,7 +19,7 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 | 8 | Checkpoint flow + soft gate | ✅ | `src/components/blocks/practice.tsx`, `courseSummary()` in `src/lib/server/learn.ts` |
 | 9 | Progress page (replaces PROGRESS.md) | ✅ | `/progress`, `src/lib/server/progress.ts` |
 | 10 | Content migration: DSA 00, DSA 01, Frontend 01 → MDX; README → `course.yaml` + `overview.mdx` | ✅ | `content/` |
-| — | Deploy to Vercel + Supabase | 🟡 Supabase project created; `next start` works locally against it. Vercel next | `app/README.md` |
+| — | Deploy to Vercel + Supabase | 🟡 Deployed to Vercel; the first deploy failed after login (migrations missing), fixed, redeploy pending | `app/README.md` |
 | — | RLS on every table (locks out Supabase's Data API) | ✅ | `src/lib/db/schema.ts`, `drizzle/0001_enable_rls.sql` |
 
 ## How it was verified (2026-10-09)
@@ -66,6 +66,7 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 - Grading happens in the browser. That's acceptable for a single user.
 - Push notifications aren't wired up yet (v1.5). The timer uses the browser Notification API while its tab is open.
 - Milestone pages show a placeholder until exam mode arrives (v2).
+- Any file read from disk at runtime behind `/*turbopackIgnore*/` (content, migrations) must be listed in `outputFileTracingIncludes` in `next.config.ts`, or it works locally but is missing on Vercel.
 - Every new table needs `.enableRLS()`, or Supabase's Data API can read and write it with the public anon key.
 - `DATABASE_URL` must be Supabase's **transaction pooler** URL (port 6543). The direct `db.<ref>.supabase.co:5432` host is IPv6-only and fails with `ENETUNREACH` on IPv4 networks and on Vercel.
 
@@ -93,3 +94,4 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 - Repo moved to `~/Documents/work/john/smart-growth`; Claude memory and the previous session were copied to the new project path.
 - Created the Supabase project. Local `npm run start` first failed with `ENETUNREACH` because `.env` had the IPv6-only direct URL; it works with the transaction pooler URL.
 - Added `.enableRLS()` to all 15 tables, plus migration `0001_enable_rls.sql`, with no policies. Supabase's `anon`/`authenticated` roles get nothing through the Data API, while the app, which connects as the table owner, isn't affected. Checked in PGlite: the owner can read and write; a role with full table grants reads 0 rows and its inserts are rejected. `tsc` is clean and all 26 tests pass.
+- First Vercel deploy: after login it threw `Can't find meta/_journal.json file`. `drizzle/` wasn't in the function bundle because the runtime path is hidden from file tracing. Added `./drizzle/**/*` to `outputFileTracingIncludes`; `next build` now lists all migration files in the page's `.nft.json`.
