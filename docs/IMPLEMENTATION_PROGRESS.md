@@ -78,7 +78,8 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
    - AI hint ladder, explain-this, and solution review (Anthropic SDK, with the monthly cap from Settings)
    - Web push notifications
    - In-lesson surprise questions
-2. **Content:** write DSA Module 02 and Frontend Module 02 in the CLAUDE.md format.
+2. **Kubernetes course:** Phase 1 drafted and awaiting the user's review; once the approach is agreed, write Phases 2–3 (Udemy chapters 06–11 plus the added topics).
+3. **Content:** write DSA Module 02 and Frontend Module 02 in the CLAUDE.md format.
 
 ## Log
 
@@ -95,3 +96,9 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 - Added `.enableRLS()` to all 15 tables, plus migration `0001_enable_rls.sql`, with no policies. Supabase's `anon`/`authenticated` roles get nothing through the Data API, while the app, which connects as the table owner, isn't affected. Checked in PGlite: the owner can read and write; a role with full table grants reads 0 rows and its inserts are rejected. `tsc` is clean and all 26 tests pass.
 - First Vercel deploy: after login it threw `Can't find meta/_journal.json file`. `drizzle/` wasn't in the function bundle because the runtime path is hidden from file tracing. Added `./drizzle/**/*` to `outputFileTracingIncludes`; `next build` now lists all migration files in the page's `.nft.json`.
 - Redeployed; login and the DB work on Vercel. v1 is live.
+
+### 2026-10-31
+- New course `content/k8s-fundamentals/` (Kubernetes Fundamentals), built from the transcripts of the Udemy course "Kubernetes for the Absolute Beginners" in `/data/k8/`. The three "part" folders there are identical copies of one course, so the course is split into 3 phases by topic instead.
+- `course.yaml`: the full roadmap (14 modules, 3 milestones). Topics added beyond the videos: namespaces/ConfigMaps/Secrets, probes and resources, storage, Ingress and Helm. `overview.mdx` has a table of what the course changes from the videos and why (control plane terms, containerd, kind instead of minikube, `apply -f`, change-cause instead of `--record`, readiness probes).
+- Phase 1 written: Modules 01–05. 01 was written first as the template; 02–05 were written by parallel agents from it and then reviewed. Consistency fixes after review: cluster/node names (`lab-*`), the image name (`hello-k8s`), and `/` returning 503 during startup so the Module 05 load test is realistic.
+- `content:check` passes for all files, all external links return 200, and every page renders on a local dev server (scratch PGlite).

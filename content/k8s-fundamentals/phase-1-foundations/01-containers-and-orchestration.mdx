@@ -1,0 +1,705 @@
+# Module 01: Containers and Why Orchestration Exists
+
+**Time:** ~1 week (6 hrs)
+**Prerequisites:** none
+**You'll need:** Docker (you have 28.x), a registry account (GitHub Container Registry or Docker Hub), and **at least 5 GB free** on the disk Docker uses. Check with `df -h /var/lib/docker` and `docker system df`; `docker system prune` frees space.
+
+---
+
+## 1. Why it matters (the backend analogy)
+
+Kubernetes doesn't run your code. It runs **containers**, and it assumes you already know what one is. Most beginner confusion in Kubernetes ("why can't my Pod reach localhost?", "why did my file disappear?", "why is the image 1.2 GB?") is really container confusion. So we start here.
+
+You already know these problems from backend work:
+
+| Backend pain you've felt | What containers change |
+|---|---|
+| "Works on my machine": prod has a different Node, OpenSSL or glibc | The image carries its own userland. Same bytes on your laptop, in CI and in prod |
+| Two services need different versions of the same library on one server | Each container has its own filesystem. No shared `node_modules` or system packages |
+| A 40-step onboarding doc to get the stack running | `docker run` (or one compose file) and it's up |
+| Deploying = SSH in, `git pull`, restart, hope | Deploying = start a new container from a tested, immutable image |
+| A VM per service, each with a full OS to patch | Many containers share one kernel, start in milliseconds, weigh megabytes |
+
+Then a second set of problems shows up the moment you run containers on more than one machine, and that's what Kubernetes is for (section 2.6).
+
+<Card id="containers-what-they-fix" q="Which everyday backend problems do containers fix?">
+
+Environment drift ("works on my machine"), conflicting dependencies on one host, slow onboarding, mutable SSH-and-pray deploys, and the overhead of a full VM per service.
+
+</Card>
+
+---
+
+## 2. Concepts
+
+### 2.1 The problem: the "matrix from hell"
+
+<Callout type="note">
+
+**Watch:** 02 › 1 Containers Overview (local video)
+
+</Callout>
+
+Picture a stack: a Node API, MongoDB, Redis, and a worker. Every component must be compatible with the OS version, and with each other's library versions. Upgrade one and you re-check the whole grid. Every new developer rebuilds the grid by hand. Dev, test and prod drift apart. The video calls this the **matrix from hell**.
+
+Containers cut the grid apart: each component ships with its own dependencies, isolated from the others, on the same host.
+
+<Card id="matrix-from-hell" q="What is the 'matrix from hell'?">
+
+The grid of compatibility checks between every component of a stack, its library versions, and the host OS. Every upgrade or new environment means re-checking it by hand. Containers break it up by giving each component its own isolated dependencies.
+
+</Card>
+
+### 2.2 What a container really is
+
+The video says containers are "completely isolated environments, like VMs, except they share the kernel". That's true, but the precise version is more useful:
+
+**A container is an ordinary Linux process that the kernel lies to.** Two kernel features do the lying:
+
+- **Namespaces** control what the process can *see*. It gets its own process tree (it thinks it's PID 1), its own network interfaces and IP, its own mount table and root filesystem, its own hostname.
+- **cgroups** (control groups) control what it can *use*: CPU, memory, number of processes. Exceed the memory limit and the kernel kills it (`OOMKilled`, which you'll meet again in Kubernetes).
+
+There's no "container" object in the Linux kernel. There's a process, a set of namespaces and a cgroup. Tools like Docker, containerd and runc just set those up for you.
+
+```bash
+docker run -d --name web nginx
+ps -ef | grep "nginx: master"     # on the HOST: it's just a process with a normal PID
+docker exec web cat /proc/1/cmdline  # INSIDE: the same process thinks it's PID 1
+```
+
+**Sharing the kernel** has two consequences:
+
+1. A container can be any Linux distribution (Alpine, Debian, Ubuntu) on any Linux host, because distributions differ only in their userland (files and packages), not their kernel.
+2. A Linux container can't run on a Windows kernel, and vice versa. Docker Desktop on macOS or Windows runs Linux containers inside a hidden Linux VM.
+
+<Card id="container-is-a-process" q="What is a container, precisely?">
+
+An ordinary Linux process that the kernel isolates: **namespaces** limit what it can see (PIDs, network, mounts, hostname), **cgroups** limit what it can use (CPU, memory). There's no "container" object in the kernel.
+
+</Card>
+
+<Card id="namespaces-vs-cgroups" q="Namespaces vs cgroups: which does what?">
+
+Namespaces = what a process can **see** (its own PID tree, network, filesystem, hostname). cgroups = what it can **use** (CPU, memory, PIDs). Exceeding a cgroup memory limit gets the process OOM-killed.
+
+</Card>
+
+<Card id="shared-kernel-consequences" q="What follows from containers sharing the host kernel?">
+
+Any Linux distro image runs on any Linux host (distros differ only in userland). But Linux containers can't run on a Windows kernel; Docker Desktop on macOS/Windows uses a hidden Linux VM.
+
+</Card>
+
+#### Containers vs virtual machines
+
+| | Virtual machine | Container |
+|---|---|---|
+| What's virtualized | Hardware (a hypervisor runs whole guest OSes) | The OS view (one kernel, many isolated processes) |
+| Each one contains | A full OS + kernel + app | App + its libraries only |
+| Size | Gigabytes | Megabytes |
+| Start time | Minutes (boots an OS) | Milliseconds to seconds (starts a process) |
+| Isolation | Strong: separate kernels | Weaker: one shared kernel |
+| Mix OSes on one host | Yes (Linux and Windows guests) | No (same kernel family) |
+
+It's not either/or. In practice Kubernetes **nodes are usually VMs**, and each VM runs dozens of containers. You get the VM's easy provisioning and strong isolation between tenants, and the container's density and speed between services.
+
+<Card id="vm-vs-container" q="Containers vs VMs: size, start time, isolation. And how are they usually combined?">
+
+VMs virtualize hardware (full OS each, GBs, minutes to boot, strong isolation). Containers virtualize the OS view (shared kernel, MBs, start in ms–s, weaker isolation). In practice Kubernetes nodes are VMs running many containers each.
+
+</Card>
+
+### 2.3 Images, layers and registries
+
+An **image** is a read-only template: a stack of filesystem **layers** plus metadata (the default command, env vars, exposed port, user). A **container** is a running process started from an image, with a thin writable layer on top.
+
+```
+┌─────────────────────────────┐  ← container's writable layer (lost when the container is removed)
+├─────────────────────────────┤
+│ COPY . .          (your code)│  ← image layers: read-only, shared, cached
+│ RUN npm ci        (deps)     │
+│ FROM node:22-slim (base OS)  │
+└─────────────────────────────┘
+```
+
+Things that follow from this, all of which matter in Kubernetes:
+
+- **Containers are disposable.** Anything written inside a container is gone when it's replaced. Kubernetes replaces containers constantly (rollouts, crashes, rescheduling), so state belongs in a database or a volume (Module 11), never in the container's filesystem.
+- **Layers are shared and cached.** Ten containers from one image share its layers on disk. Rebuilding only redoes the layers after the first change (section 2.4).
+- **Images are addressed by name and tag, or by digest.** `nginx:1.27` is a *tag*, a movable pointer that someone can re-push. `nginx@sha256:3f9…` is a *digest*, the content hash, which never changes. `nginx` with no tag means `nginx:latest`, which is just a tag called "latest", not "the newest".
+- **A registry stores images.** Docker Hub, GitHub Container Registry (`ghcr.io`), and every cloud's own registry. A full image name includes the registry: `ghcr.io/you/api:1.4.0`. With no registry, Docker Hub is assumed.
+
+Images follow the **OCI** (Open Container Initiative) image spec, so an image built with Docker runs on containerd, CRI-O or Podman. That's why Kubernetes could drop Docker as a runtime without breaking anyone's images (Module 02).
+
+<Card id="image-vs-container" q="What is an image vs a container?">
+
+An image is a read-only template: stacked filesystem layers plus metadata (command, env, user). A container is a running process started from an image, with a thin writable layer on top that's lost when the container is removed.
+
+</Card>
+
+<Card id="containers-disposable" q="Why must state never live in a container's filesystem, especially on Kubernetes?">
+
+The writable layer is lost when the container is replaced, and Kubernetes replaces containers constantly (rollouts, crashes, rescheduling). State belongs in a database or a volume.
+
+</Card>
+
+<Card id="tag-vs-digest" q="Tag vs digest, and what does 'latest' mean?">
+
+A tag (`nginx:1.27`) is a movable pointer that can be re-pushed. A digest (`nginx@sha256:…`) is the content hash and never changes. `latest` is just the default tag name, not "the newest version". Pin real versions (or digests) in production.
+
+</Card>
+
+<Card id="oci-why-it-matters" q="Why does the OCI image spec matter for Kubernetes?">
+
+Images built by Docker follow the OCI spec, so they run on any OCI runtime (containerd, CRI-O). That's why Kubernetes could drop Docker Engine as a runtime without breaking images.
+
+</Card>
+
+### 2.4 Writing a good Dockerfile for a backend service
+
+Here's a production-shaped Dockerfile for a TypeScript/Express service. Every line is there for a reason.
+
+```bash
+# ---- build stage: has dev dependencies and the TypeScript compiler
+FROM node:22-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./   # 1. copy ONLY the dependency manifests first...
+RUN npm ci                               # 2. ...so this slow layer is cached until they change
+COPY tsconfig.json ./
+COPY src ./src                           # 3. source changes only invalidate layers from here down
+RUN npm run build && npm prune --omit=dev
+
+# ---- runtime stage: only what's needed to run
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER node                                # 4. don't run as root
+EXPOSE 3000                              # 5. documentation only; it doesn't publish anything
+CMD ["node", "dist/server.js"]           # 6. exec form: node is PID 1 and receives SIGTERM
+```
+
+(The code fence says `bash` only for comment highlighting; it's a Dockerfile.)
+
+**Rules that matter later in Kubernetes:**
+
+| Rule | Why Kubernetes cares |
+|---|---|
+| Listen on `0.0.0.0`, not `127.0.0.1` | Traffic arrives on the container's network interface. A server bound to localhost is unreachable from outside the container |
+| Read config from **environment variables** | Kubernetes injects config with env vars and ConfigMaps (Module 08). Same image in every environment |
+| Log to **stdout/stderr**, not files | `kubectl logs` reads stdout. Log files inside the container vanish with it |
+| Handle **SIGTERM**: stop accepting, finish in-flight requests, exit | Kubernetes sends SIGTERM before killing a container during every rollout. Ignore it and users get dropped connections |
+| **Exec-form `CMD`** (`["node", "…"]`) | Shell form (`CMD node …`) wraps your app in `/bin/sh`, which doesn't forward SIGTERM |
+| **One process per container** | Kubernetes restarts and scales per container; helpers get their own container (Module 03) |
+| Small, non-root images | Faster pulls on every node, smaller attack surface |
+
+Also add a `.dockerignore` (at least `node_modules`, `.git`, `dist`, `.env`), or `COPY . .` sends all of it into the build and can leak secrets into the image.
+
+<Card id="dockerfile-layer-order" q="Why copy package.json and run npm ci before copying the source?">
+
+Layers are cached until something they depend on changes. Dependency manifests change rarely, so the slow `npm ci` layer stays cached; source edits only rebuild the cheap layers after `COPY src`.
+
+</Card>
+
+<Card id="container-app-rules" q="Name five app rules that make a container behave well on Kubernetes.">
+
+Listen on `0.0.0.0`. Config from env vars. Log to stdout/stderr. Handle SIGTERM gracefully (exec-form `CMD` so the app is PID 1 and receives it). One process per container. (Also: small, non-root images.)
+
+</Card>
+
+<Card id="multi-stage-builds" q="What does a multi-stage build give you?">
+
+Build tools and dev dependencies stay in the build stage; the final image copies only the runtime artifacts. Smaller image, faster pulls, smaller attack surface.
+
+</Card>
+
+### 2.5 Dev and ops share one artifact
+
+<Callout type="note">
+
+**Watch:** the end of 02 › 1 Containers Overview
+
+</Callout>
+
+Before containers, developers handed ops a setup guide, and ops rebuilt the environment from it in production, imperfectly. With containers, the Dockerfile *is* the setup guide, written once and executed by a machine. The image that passed CI is the exact image that runs in prod. Kubernetes builds on this: its whole job is "run *this image*, *this many times*, *like this*".
+
+<Card id="image-as-contract" q="How do images change the dev-to-ops handoff?">
+
+The Dockerfile replaces the hand-written setup guide, and the image that passed CI is the exact artifact that runs in production. No environment is rebuilt by hand.
+
+</Card>
+
+### 2.6 Why orchestration exists
+
+<Callout type="note">
+
+**Watch:** 02 › 2 Container Orchestration (local video)
+
+</Callout>
+
+`docker run` on one machine is easy. Now run that service in production:
+
+- It must run as **several copies** on **several machines**, so one crash or one dead server doesn't take it down. Which machine has room for the next copy?
+- When a copy crashes at 3 a.m., something must **notice and restart it**. When a whole machine dies, its containers must be **started elsewhere**.
+- Traffic must be **load-balanced** across copies, and other services must **find** them, even though copies come and go with new IPs.
+- New versions must roll out **gradually**, and roll back fast if they're bad.
+- Load goes up and down; the number of copies (and machines) should follow.
+- Config and secrets must reach the containers without baking them into images.
+
+You could script all of that around `docker run`. You'd be writing a worse Kubernetes. **Container orchestration** is the general solution: you describe what should run, and the orchestrator places, restarts, connects, scales and updates containers across a cluster of machines.
+
+The video compares three orchestrators. Today the picture is simpler:
+
+| | Status today |
+|---|---|
+| **Kubernetes** | The industry standard. Started at Google (inspired by their internal system, Borg), open-sourced in 2014, now run by the CNCF. Every cloud offers it as a managed service |
+| Docker Swarm | Simple and built into Docker, but little new adoption |
+| Apache Mesos | Largely abandoned for container workloads |
+| HashiCorp Nomad | A simpler alternative some teams choose; not covered here |
+
+<Card id="why-orchestration" q="What problems appear once you run containers in production across several machines?">
+
+Placing copies on machines with room; restarting crashed containers and rescheduling off dead machines; load balancing and service discovery as copies come and go; gradual rollouts and fast rollbacks; scaling with load; delivering config and secrets. Container orchestration solves these declaratively.
+
+</Card>
+
+### 2.7 What Kubernetes gives you, and what it costs
+
+**What you get**, each of which is a later module:
+
+| Capability | Module |
+|---|---|
+| Self-healing: crashed containers restarted, dead nodes' Pods replaced | 04 |
+| Rolling updates and rollbacks | 05 |
+| Service discovery and load balancing | 07 |
+| Config and secrets injection | 08 |
+| Health checks and resource limits | 10 |
+| Storage that follows the workload | 11 |
+| HTTP routing, packaging | 12 |
+| Horizontal scaling, including the nodes themselves | 10, 14 |
+
+All of it is **declarative**: you write files describing the end state, and the cluster keeps it that way.
+
+**What it doesn't do:** build your images, run your CI/CD pipeline, or design your app. It's a platform for running containers, not a PaaS.
+
+**What it costs:** a lot of moving parts, a lot of YAML, and a real learning curve (hence this course). A professional's honest view: for one small app, a single VM or a PaaS (Fly.io, Render, Cloud Run) is often the better choice. Kubernetes pays off when you have many services, several teams, or need its self-healing and rollout machinery at scale. You're learning it because that's where most backend jobs end up.
+
+<Card id="k8s-not-a-paas" q="What does Kubernetes NOT do, and when is it overkill?">
+
+It doesn't build images, run CI/CD, or design your app; it runs containers. For one small app, a VM or a PaaS is often better. It pays off with many services, several teams, or a need for self-healing and rollouts at scale.
+
+</Card>
+
+---
+
+## 3. Drills
+
+Do these in a `k8s-journey/01/` folder in a new git repo. You'll keep adding to this repo for the whole course.
+
+<Drill id="d1-container-is-a-process" title="D1. A container is just a process (20 min)">
+
+Run `docker run -d --name web nginx`. Then:
+
+1. On the host, find the nginx master process with `ps -ef`. Note its PID.
+2. Run `docker inspect -f '{{.State.Pid}}' web`. Does it match?
+3. Run `docker exec web sh -c 'cat /proc/1/cmdline; echo; hostname'`. What PID does nginx think it has? What's the hostname?
+4. On the host, run `sudo ls -l /proc/<PID>/ns` and compare it with `ls -l /proc/self/ns`. What differs?
+
+Explain in two sentences what a "container" is, based on what you saw.
+
+<Answer>
+
+1–2. The PIDs match: the nginx master is an ordinary host process with a normal PID (say 48213), and `docker inspect` reports the same number.
+
+3. Inside, the same process is PID 1, and the hostname is the container ID (e.g. `3f2a9c1d7e4b`). The PID namespace and UTS (hostname) namespace give it its own view.
+
+4. The namespace links (`pid:[4026532…]`, `net:[…]`, `mnt:[…]`, `uts:[…]`, `ipc:[…]`) have different inode numbers from your shell's, meaning the process lives in different namespaces. (`user` and sometimes `cgroup` may be the same, depending on configuration.)
+
+A container is a normal process on the host kernel, placed in its own namespaces so it sees its own PIDs, network, filesystem and hostname, and limited by cgroups. Docker sets that up; the kernel does the work.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-shared-kernel" title="D2. One kernel, many distros (15 min)">
+
+Run each and compare the outputs:
+
+```bash
+uname -r
+docker run --rm alpine uname -r
+docker run --rm debian:12 uname -r
+docker run --rm alpine cat /etc/os-release | head -2
+docker run --rm debian:12 cat /etc/os-release | head -2
+```
+
+What's the same across all three, and what's different? What would happen if you tried to run a Windows container image here?
+
+<Answer>
+
+`uname -r` prints the **same kernel version** every time (your host's, e.g. `6.8.0-78-generic`), because every container runs on the host kernel. `/etc/os-release` differs (Alpine vs Debian), because each image brings its own userland files.
+
+A Windows image needs a Windows kernel, so it fails on a Linux host (`no matching manifest for linux/amd64` or an OS mismatch error). Docker Desktop on Windows can run *Linux* containers only because it hides a Linux VM.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-containerize-service" title="D3. Containerize a small service (45 min)">
+
+Write a tiny HTTP service in Node/TS (or Go) with one endpoint `GET /` that returns `{"version": APP_VERSION, "host": os.hostname()}`, where `APP_VERSION` comes from an env var (default `"dev"`). Write a Dockerfile following section 2.4, plus a `.dockerignore`.
+
+Build and run it:
+
+```bash
+docker build -t hello:v1 .
+docker run --rm -p 8080:3000 -e APP_VERSION=v1 hello:v1
+curl localhost:8080
+```
+
+Then, on purpose, change the server to listen on `127.0.0.1` instead of `0.0.0.0`, rebuild and curl again. What happens and why?
+
+<Answer>
+
+A minimal Node version (`server.js`, no build step):
+
+```js
+const http = require("node:http");
+const os = require("node:os");
+const version = process.env.APP_VERSION ?? "dev";
+const server = http.createServer((req, res) => {
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify({ version, host: os.hostname() }));
+});
+server.listen(3000, "0.0.0.0", () => console.log(`listening on 3000, version ${version}`));
+process.on("SIGTERM", () => server.close(() => process.exit(0)));
+```
+
+```bash
+FROM node:22-slim
+WORKDIR /app
+COPY server.js .
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+`curl` returns `{"version":"v1","host":"<container id>"}`. The host is the container's hostname, not your machine's.
+
+Bound to `127.0.0.1`: curl fails (`Connection reset by peer` or an empty reply). `-p 8080:3000` forwards traffic to the container's **network interface**, but the server only listens on the container's own loopback, which is a different interface. You'll see the exact same failure in Kubernetes, where it's a classic "my Pod is running but nothing can reach it".
+
+</Answer>
+
+</Drill>
+
+<Drill id="d4-layer-cache" title="D4. Watch the layer cache (20 min)">
+
+Using your D3 project (add a `package.json` with one dependency, e.g. `express`, and `RUN npm ci`):
+
+1. Build it twice. How long does the second build take, and which steps say `CACHED`?
+2. Change one line of your source and rebuild. Which steps re-run?
+3. Now restructure the Dockerfile so it does `COPY . .` **before** `RUN npm ci`. Change one line of source and rebuild. What re-runs now?
+4. Run `docker history hello:v1`. Which layer is biggest?
+
+<Answer>
+
+1. The second build is near-instant: every step is `CACHED` because nothing changed.
+2. Only the steps from `COPY server.js` (or `COPY src`) downward re-run. `npm ci` stays cached because `package.json`/`package-lock.json` didn't change.
+3. With `COPY . .` first, *any* source change invalidates that layer and every layer after it, so `npm ci` re-runs on every edit. That's the slow, common mistake.
+4. Usually the base image layers (tens of MB) and the `npm ci` layer (`node_modules`) are the biggest. Your code is tiny.
+
+Rule: order Dockerfile steps from least to most frequently changing.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-image-diet" title="D5. Image diet (20 min)">
+
+Build your service on three bases and record the sizes from `docker images`:
+
+1. `FROM node:22`
+2. `FROM node:22-slim`
+3. `FROM node:22-alpine`
+
+Which would you use in production and why? What's one risk of Alpine?
+
+<Answer>
+
+Typical sizes: `node:22` ≈ 1.1 GB (full Debian with compilers), `node:22-slim` ≈ 220–250 MB, `node:22-alpine` ≈ 150–180 MB. Your code adds almost nothing.
+
+`slim` is a sensible default: small, and it uses glibc like most servers. Alpine is smaller but uses **musl** libc instead of glibc. Native npm modules (bcrypt, sharp, some DB drivers) can fail to install or behave differently, and DNS resolution differs in edge cases. Smaller images matter on Kubernetes because **every node** that runs your Pod must pull the image, so size directly affects how fast new Pods start.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-push-to-registry" title="D6. Push to a registry and pull by digest (25 min)">
+
+Push your image to GitHub Container Registry (or Docker Hub):
+
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u <you> --password-stdin   # token needs write:packages
+docker tag hello:v1 ghcr.io/<you>/hello:v1
+docker push ghcr.io/<you>/hello:v1
+```
+
+1. Find the digest in the push output (or with `docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/<you>/hello:v1`).
+2. Delete the local image, then pull it back **by digest**.
+3. Make the package public in GitHub's package settings (Kubernetes will pull it without credentials later).
+
+Why might a production manifest reference a digest instead of a tag?
+
+<Answer>
+
+`docker push` prints `v1: digest: sha256:… size: …`. `docker rmi ghcr.io/<you>/hello:v1` then `docker pull ghcr.io/<you>/hello@sha256:…` pulls the exact same bytes.
+
+A tag can be re-pushed to point at different content (by accident, or by an attacker with registry access). A digest is the hash of the content, so `image@sha256:…` always means the same image on every node. Teams often keep tags for humans and resolve them to digests in CI.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d7-be-the-orchestrator" title="D7. Be the orchestrator (20 min)">
+
+Run three copies of your service by hand:
+
+```bash
+for i in 1 2 3; do docker run -d --name hello-$i -p 808$i:3000 hello:v1; done
+```
+
+1. Kill one with `docker kill hello-2`. Does anything bring it back?
+2. Now you need to ship `v2` to all three without downtime. Write down, step by step, what you'd have to do by hand.
+3. List everything a script would need to handle to do this reliably across **five machines**.
+
+Clean up with `docker rm -f hello-1 hello-2 hello-3`.
+
+<Answer>
+
+1. Nothing brings it back. (`--restart=always` would restart it on *this* machine, but nothing moves it if the machine dies.)
+
+2. By hand: start `hello-4` with v2 on a new port, check it's healthy, add it to the load balancer, remove `hello-1` from the load balancer, wait for in-flight requests, stop it, and repeat for each copy. Roll back by doing it all in reverse.
+
+3. A script for five machines would need to: track which machine has free CPU/memory, place copies across machines (not all on one), detect crashes and dead machines and restart elsewhere, update the load balancer as copies move and get new IPs/ports, do health-checked rolling updates and rollbacks, and distribute config and secrets. That list is the job description of Kubernetes: scheduler, controllers, Services, Deployments, ConfigMaps/Secrets.
+
+</Answer>
+
+</Drill>
+
+---
+
+## 4. Build: the `hello-k8s` service (2–3 hrs)
+
+<Build id="build-hello-k8s" title="The hello-k8s service">
+
+Build the small service you'll deploy in **every** module of Phase 1. It's deliberately simple, but it has the hooks Kubernetes needs, so Modules 03–05 and Milestone 1 can focus on Kubernetes.
+
+Write it in TypeScript/Node or Go, in `k8s-journey/hello-k8s/`.
+
+Endpoints:
+- `GET /` → JSON `{ version, color, host }`. `version` and `color` come from env vars `APP_VERSION` and `COLOR`; `host` is the hostname (it becomes the Pod name later).
+- `GET /healthz` → `200` while the process is alive.
+- `GET /readyz` → `503` for the first `STARTUP_DELAY_SECONDS` (env var, default 5), then `200`.
+- While it's "starting", `GET /` also returns `503` (`warming up`). Together these simulate a real app with slow startup (loading caches, connecting to a database), which you'll need for readiness probes in Module 05.
+
+Behavior:
+- On **SIGTERM**: log it, stop accepting new connections, finish in-flight requests, exit `0` within 10 s.
+- Log one JSON line per request to stdout.
+
+Acceptance:
+- [ ] Multi-stage (or minimal) Dockerfile, exec-form `CMD`, non-root `USER`, `.dockerignore`
+- [ ] Final image under 200 MB (`docker images`)
+- [ ] Listens on `0.0.0.0`, port from `PORT` env var (default 3000)
+- [ ] `docker run -e APP_VERSION=v1 -e COLOR=blue …` then `curl /` shows both values
+- [ ] `/` and `/readyz` return 503 during the startup delay, then 200; `/healthz` returns 200 throughout
+- [ ] `docker stop` makes it log the SIGTERM and exit within 10 s, not after Docker's 10 s timeout kill (check with `time docker stop <name>`: well under 10 s)
+- [ ] Two tags pushed to a **public** repo named `hello-k8s` (e.g. `ghcr.io/<you>/hello-k8s`): `v1` (`COLOR` default `blue`) and `v2` (default `green`). Modules 03–05 use this exact name
+- [ ] README with the image name, env vars and endpoints
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-container-mechanism" type="mcq" answer="c">
+
+What actually isolates a container from other processes on the host?
+
+<Choice id="a">A lightweight hypervisor that Docker runs per container</Choice>
+<Choice id="b">A separate copy of the Linux kernel inside each image</Choice>
+<Choice id="c">Kernel namespaces (what it sees) and cgroups (what it can use)</Choice>
+<Choice id="d">The Docker daemon intercepting every system call</Choice>
+
+<Why>A container is an ordinary process; namespaces and cgroups do the isolation, and the kernel is shared. See [2.2](#22-what-a-container-really-is).</Why>
+
+</Quiz>
+
+<Quiz id="q-latest-tag" type="mcq" answer="b">
+
+A manifest uses `image: myapi`. What image does the node pull?
+
+<Choice id="a">The most recently pushed version of `myapi`, whatever its tag</Choice>
+<Choice id="b">Whatever the `latest` tag of `docker.io/library/myapi` currently points to</Choice>
+<Choice id="c">The version the cluster pulled last time</Choice>
+<Choice id="d">Nothing; a tag is required</Choice>
+
+<Why>No tag means the tag named `latest`, and no registry means Docker Hub. `latest` is just a name someone pushed, not "the newest". See [2.3](#23-images-layers-and-registries).</Why>
+
+</Quiz>
+
+<Quiz id="q-vm-container-true" type="multi" answer="a,c,d">
+
+Which statements are true?
+
+<Choice id="a">Containers on one host share a kernel</Choice>
+<Choice id="b">Containers give stronger isolation than VMs</Choice>
+<Choice id="c">Kubernetes nodes are often VMs</Choice>
+<Choice id="d">A Debian-based image runs fine on an Ubuntu host</Choice>
+<Choice id="e">A Windows container image runs on a Linux host if you add `--platform windows`</Choice>
+
+<Why>Shared kernel means weaker isolation than VMs, and no Windows images on Linux. Nodes are usually VMs running many containers. See [2.2](#22-what-a-container-really-is).</Why>
+
+</Quiz>
+
+<Quiz id="q-dockerfile-bug" type="bug" line="4">
+
+This image builds, and the container starts and logs `listening on 3000`, but `curl localhost:8080` from the host (run with `-p 8080:3000`) gets no response. Click the buggy line.
+
+```js
+const http = require("node:http");
+const server = http.createServer((req, res) => res.end("ok"));
+const port = Number(process.env.PORT ?? 3000);
+server.listen(port, "127.0.0.1", () => console.log(`listening on ${port}`));
+```
+
+<Why>Bound to `127.0.0.1`, the server only accepts connections from inside the container's own loopback. Published ports arrive on the container's network interface, so it must listen on `0.0.0.0`. See [2.4](#24-writing-a-good-dockerfile-for-a-backend-service).</Why>
+
+</Quiz>
+
+<Quiz id="q-multistage-from" type="blank" answer="build">
+
+Complete the runtime stage so it copies the compiled code out of the first stage.
+
+```bash
+FROM node:22-slim AS build
+WORKDIR /app
+COPY . .
+RUN npm ci && npm run build
+
+FROM node:22-slim
+WORKDIR /app
+COPY --from=___ /app/dist ./dist
+CMD ["node", "dist/server.js"]
+```
+
+<Why>`COPY --from=<stage name>` copies files out of an earlier stage, so build tools never reach the final image. See [2.4](#24-writing-a-good-dockerfile-for-a-backend-service).</Why>
+
+</Quiz>
+
+<Quiz id="q-cmd-exec-form" type="mcq" answer="b">
+
+Which `CMD` makes `node` PID 1, so it receives SIGTERM directly when Kubernetes stops the container?
+
+<Choice id="a">`CMD node server.js`</Choice>
+<Choice id="b">`CMD ["node", "server.js"]`</Choice>
+<Choice id="c">`CMD sh -c "node server.js"`</Choice>
+
+<Why>Exec form (a JSON array) runs the binary directly. Shell form runs `/bin/sh -c`, which doesn't forward SIGTERM, so Kubernetes force-kills your app after the grace period. See [2.4](#24-writing-a-good-dockerfile-for-a-backend-service).</Why>
+
+</Quiz>
+
+<Quiz id="q-layer-order" type="order" answer="from,copy-manifests,install,copy-src,build,cmd">
+
+Order these Dockerfile steps for the best layer caching.
+
+<Step id="from">`FROM node:22-slim`</Step>
+<Step id="copy-manifests">`COPY package.json package-lock.json ./`</Step>
+<Step id="install">`RUN npm ci`</Step>
+<Step id="copy-src">`COPY src ./src`</Step>
+<Step id="build">`RUN npm run build`</Step>
+<Step id="cmd">`CMD ["node", "dist/server.js"]`</Step>
+
+<Why>Least-frequently-changing first: base, dependency manifests, install, then source and build. A source edit then only rebuilds from `COPY src`. See [2.4](#24-writing-a-good-dockerfile-for-a-backend-service).</Why>
+
+</Quiz>
+
+<Quiz id="q-orchestration-not" type="mcq" answer="d">
+
+Which of these is **not** something Kubernetes does for you?
+
+<Choice id="a">Restart a crashed container</Choice>
+<Choice id="b">Replace the containers of a node that died</Choice>
+<Choice id="c">Roll out a new image version gradually</Choice>
+<Choice id="d">Build your container image from source on every commit</Choice>
+
+<Why>Building images is your CI pipeline's job. Kubernetes runs images that already exist in a registry. See [2.7](#27-what-kubernetes-gives-you-and-what-it-costs).</Why>
+
+</Quiz>
+
+<Quiz id="q-explain-state" type="explain">
+
+Your teammate's service writes uploaded files to `/app/uploads` inside its container. It works on their laptop. Explain what will go wrong once it runs on Kubernetes, and what to do instead.
+
+<Model>
+
+The files live in the container's writable layer, which is thrown away whenever the container is replaced. On Kubernetes that happens constantly: every rollout, every crash restart, every rescheduling to another node. Uploads will randomly disappear, and with several replicas each copy sees only its own files. Store uploads in object storage (S3/GCS) or a database, or at minimum a persistent volume (Module 11).
+
+</Model>
+
+</Quiz>
+
+---
+
+## 5. Checkpoint
+
+Answer these out loud, without notes. If you get stuck on one, re-read that section.
+
+<Checkpoint>
+<Ask id="cp-what-is-container" q="What is a container, precisely? What do namespaces and cgroups each do?" section="22-what-a-container-really-is">
+
+An ordinary Linux process on the shared host kernel. Namespaces control what it can see: its own PID tree, network interfaces, mounts/filesystem and hostname. cgroups control what it can use: CPU, memory, number of processes. Exceeding the memory limit gets it OOM-killed. Docker/containerd/runc just configure these kernel features.
+
+</Ask>
+<Ask id="cp-vm-vs-container" q="Compare containers and VMs, and explain why Kubernetes nodes are usually VMs anyway." section="22-what-a-container-really-is">
+
+VMs virtualize hardware: each has a full OS and kernel, is GBs in size, boots in minutes, and is strongly isolated. Containers share the host kernel: MBs, start in milliseconds, weaker isolation, same OS family only. They combine well: VMs give easy provisioning and strong isolation between machines or tenants; containers give density and speed for the services on each VM.
+
+</Ask>
+<Ask id="cp-image-layers" q="What is an image made of, how does layer caching work, and how do you order a Dockerfile to use it?" section="23-images-layers-and-registries">
+
+A stack of read-only filesystem layers plus metadata (command, env, user, ports). Each instruction creates a layer; a rebuild reuses cached layers until the first instruction whose inputs changed, then redoes everything after it. So order from least to most frequently changing: base image, dependency manifests, dependency install, then source code and build.
+
+</Ask>
+<Ask id="cp-tags-digests" q="What's the difference between a tag and a digest, and what's wrong with relying on latest?" section="23-images-layers-and-registries">
+
+A tag is a movable name that can be re-pushed to different content. A digest is the content's hash and is immutable. `latest` is just the default tag name; it can point at anything and changes under you, so different nodes may run different code. Pin versions, or digests.
+
+</Ask>
+<Ask id="cp-k8s-friendly-app" q="What must your app and Dockerfile do to behave well on Kubernetes?" section="24-writing-a-good-dockerfile-for-a-backend-service">
+
+Listen on 0.0.0.0. Take config from env vars. Log to stdout/stderr. Handle SIGTERM by draining and exiting, with an exec-form CMD so the app is PID 1 and gets the signal. One process per container. Keep no state in the container filesystem. Small, non-root images.
+
+</Ask>
+<Ask id="cp-why-orchestration" q="Why isn't docker run enough in production? List what an orchestrator must handle." section="26-why-orchestration-exists">
+
+You need several copies across several machines for availability. Something must place them where there's room, restart crashed containers, reschedule when a machine dies, load-balance and let other services find copies whose IPs keep changing, roll out new versions gradually and roll back, scale with load, and deliver config and secrets. Scripting all that around docker run means rebuilding Kubernetes badly.
+
+</Ask>
+<Ask id="cp-when-not-k8s" q="When would you advise a team NOT to use Kubernetes?" section="27-what-kubernetes-gives-you-and-what-it-costs">
+
+When it's one small app or a tiny team with no platform experience: Kubernetes brings many moving parts, lots of YAML and an operations burden. A VM or a PaaS (Cloud Run, Fly.io, Render) gets them to production faster. Kubernetes pays off with many services, several teams, or real need for self-healing, rollouts and scaling at scale.
+
+</Ask>
+</Checkpoint>
+
+---
+
+## 6. Resources
+
+<Resource href="https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/" type="docs" time="30m" required>Docker docs: The basics (what is a container, what is an image, what is a registry)</Resource>
+<Resource href="https://docs.docker.com/build/building/best-practices/" type="docs" time="30m" required>Docker docs: Building best practices (multi-stage builds, caching, .dockerignore)</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/overview/" type="docs" time="20m" required>Kubernetes docs: Overview (what Kubernetes is and isn't)</Resource>
+<Resource href="https://www.youtube.com/watch?v=8fi7uSYlOdc" type="video" time="45m">Liz Rice: Containers from scratch (builds a container in Go with namespaces and cgroups, live)</Resource>
+<Resource href="https://iximiuz.com/en/posts/container-learning-path/" type="article" time="1h">Ivan Velichko: Learning containers from the bottom up</Resource>

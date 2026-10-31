@@ -1,0 +1,1063 @@
+# Module 03: Pods and YAML Manifests
+
+**Time:** ~1.5 weeks (9 hrs)
+**Prerequisites:** Module 01 (you have the `hello-k8s` image pushed), Module 02 (a running kind cluster, `kubectl get nodes` works)
+**You'll need:** VS Code with the Red Hat **YAML** extension, your `k8s-journey` repo, and the `hello-k8s:v1` image in a public registry (or loaded into kind with `kind load docker-image`)
+
+---
+
+## 1. Why it matters (the backend analogy)
+
+Kubernetes never runs a container directly. It runs **Pods**, and every higher-level object you'll meet (ReplicaSets, Deployments, Jobs) exists to create and manage Pods. If you understand Pods (what's shared inside one, how one starts, how one fails), the rest of the course is built on solid ground.
+
+And you'll describe every Pod in **YAML**. Kubernetes YAML is a request body for the API server, written down in a file:
+
+| Backend (what you know) | Kubernetes (what you'll learn) |
+|---|---|
+| A JSON request body sent to `POST /users` | A YAML manifest sent to the API server with `kubectl apply -f` |
+| A schema (OpenAPI, Zod) that rejects bad bodies | The API schema for each `kind`; `kubectl explain` shows it, the server rejects unknown or mistyped fields |
+| A process supervised by systemd or pm2 | A container supervised by the kubelet inside a Pod |
+| A few processes on one host talking over `localhost` and sharing a directory | Containers in one Pod: shared network namespace (`localhost`) and shared volumes |
+| `ps`, `journalctl`, `ssh` into the box | `kubectl get`, `kubectl logs`, `kubectl exec` into the container |
+
+Most of your day-to-day Kubernetes time goes into two things this module teaches: **writing manifests** and **figuring out why a Pod isn't running**.
+
+<Card id="manifest-is-request-body" q="Backend analogy: what is a Kubernetes YAML manifest?">
+
+A request body for the API server, written down in a file. `kubectl apply -f` sends it; the API schema for that `kind` validates it, like a JSON body checked against an OpenAPI schema.
+
+</Card>
+
+---
+
+## 2. Concepts
+
+### 2.1 What a Pod is
+
+<Callout type="note">
+
+**Watch:** 03 › 3 Pods, then 03 › 4 Demo - Pods (local videos)
+
+</Callout>
+
+A **Pod** is the smallest thing you can deploy in Kubernetes: one or more containers that are always scheduled **together, on the same node**, and that share:
+
+- **one network namespace**: one IP address and one port space. Containers in a Pod reach each other on `localhost`.
+- **volumes** declared in the Pod, which each container can mount.
+- **one fate**: they're created together, scheduled together, and deleted together.
+
+The usual case is **one container per Pod**. A Pod is "one instance of your app", and the container is how that instance is packaged.
+
+**To scale, you add Pods, not containers.** Three replicas of your API means three Pods, each with one API container, possibly on three different nodes. Putting three copies of the API in one Pod would pin them to one node, make them fight over the same port, and kill all three together. That defeats the point.
+
+Each Pod gets its own **cluster-internal IP**. That IP is **ephemeral**: a replacement Pod gets a new one. Nothing should ever hard-code a Pod IP (Services in Module 07 solve this).
+
+<Card id="pod-definition" q="What is a Pod, and what do its containers share?">
+
+The smallest deployable unit: one or more containers always scheduled together on one node. They share one network namespace (one IP; reach each other on `localhost`), the Pod's volumes, and one fate (created and deleted together).
+
+</Card>
+
+<Card id="scale-pods-not-containers" q="How do you scale an app in Kubernetes: more containers in a Pod, or more Pods? Why?">
+
+More Pods. Copies in one Pod would be pinned to one node, collide on the same port, and die together. Separate Pods can spread across nodes and fail independently.
+
+</Card>
+
+<Card id="pod-ip-ephemeral" q="Why must nothing hard-code a Pod's IP?">
+
+Pod IPs are ephemeral: every replacement Pod (after a crash, rollout or rescheduling) gets a new IP. Stable addressing comes from Services (Module 07).
+
+</Card>
+
+### 2.2 YAML in ten minutes
+
+<Callout type="note">
+
+**Watch:** 04 › 1 Introduction to YAML (local video)
+
+</Callout>
+
+YAML is a way to write data: the same maps, lists, strings and numbers as JSON, with indentation instead of braces. In fact **every JSON document is valid YAML**, and the API server stores your objects as JSON.
+
+```yaml
+# A comment: anything after # is ignored
+name: hello            # a map (dictionary): key, colon, SPACE, value
+replicas: 3            # a number
+enabled: true          # a boolean
+
+labels:                # a map inside a map: children indented MORE than the parent
+  app: hello
+  tier: backend
+
+ports:                 # a list: one item per "- "
+  - 3000
+  - 9090
+
+containers:            # a list of maps: the shape you'll write most
+  - name: api          # "- " starts an item; its keys line up after the dash
+    image: hello-k8s:v1
+  - name: sidecar
+    image: busybox:1.36
+```
+
+The rules that bite:
+
+- **Indentation is the structure.** Siblings must have exactly the same indentation; children must have more. Use **2 spaces**, never tabs (YAML forbids tabs for indentation).
+- **A key holds a value *or* children, never both.** `calories: 105` followed by more-indented keys is an error ("mapping values are not allowed here").
+- **Maps are unordered, lists are ordered.** Swapping two keys changes nothing; swapping two list items does.
+- **`---` separates documents** in one file. One file can hold a Pod, a Service and a ConfigMap.
+
+**Quoting gotchas.** Kubernetes parses YAML with YAML 1.1 rules, where some unquoted values aren't strings:
+
+| You write | YAML reads | Fix |
+|---|---|---|
+| `value: yes` / `on` / `off` / `no` | a **boolean** | `value: "yes"` |
+| `value: true` in an env var | a boolean; env values must be strings, so the API **rejects** it | `value: "true"` |
+| `value: 8080` in an env var | a number; rejected for the same reason | `value: "8080"` |
+| `mode: 0755` | an **octal** number (493) | quote it if you mean the text `"0755"` |
+| `version: 1.10` | the float `1.1` | `version: "1.10"` |
+
+Rule of thumb: **quote every env var value.**
+
+<Card id="yaml-indentation-rules" q="What are the YAML indentation rules?">
+
+Indentation is the structure: siblings at exactly the same indent, children indented more. 2 spaces, never tabs. A key holds either a value or children, never both.
+
+</Card>
+
+<Card id="yaml-list-of-maps" q="How do you write a list of maps in YAML, and where does Kubernetes use it?">
+
+Each item starts with `- `, and that item's keys line up after the dash:
+
+```yaml
+containers:
+  - name: api
+    image: hello-k8s:v1
+```
+
+Kubernetes uses it everywhere: containers, ports, env, volumes.
+
+</Card>
+
+<Card id="yaml-quote-env" q="Why must you quote env var values like true, yes or 8080 in a manifest?">
+
+YAML 1.1 parses `true`/`yes`/`on` as booleans and `8080` as a number, but env values must be strings, so the API rejects the object. Quote every env value.
+
+</Card>
+
+### 2.3 The four top-level fields
+
+<Callout type="note">
+
+**Watch:** 05 › 1 Pods with YAML (local video)
+
+</Callout>
+
+Every Kubernetes manifest has the same four top-level fields:
+
+```yaml
+apiVersion: v1          # which API group and version defines this kind
+kind: Pod               # the object type (case-sensitive: Pod, not pod)
+metadata:               # who it is: name, labels, annotations, namespace
+  name: hello
+  labels:
+    app: hello
+    tier: backend
+spec:                   # what you want: the desired state, different for every kind
+  containers:
+    - name: hello
+      image: ghcr.io/you/hello-k8s:v1
+```
+
+**`apiVersion`** is `group/version`. Core objects that predate API groups have no group, so they're just `v1`:
+
+| `kind` | `apiVersion` |
+|---|---|
+| Pod, Service, ConfigMap, Secret, Namespace | `v1` |
+| ReplicaSet, Deployment, StatefulSet, DaemonSet | `apps/v1` |
+| Job, CronJob | `batch/v1` |
+| Ingress | `networking.k8s.io/v1` |
+
+Get it wrong and you'll see `no matches for kind "ReplicaSet" in version "v1"`. Don't memorize the table: `kubectl explain <kind>` and `kubectl api-resources` print the right version.
+
+**`metadata`** only accepts the fields Kubernetes defines (`name`, `labels`, `annotations`, `namespace`...). **Labels** are free-form key/value pairs you choose, like `app: hello` or `tier: backend`. They do nothing on their own, but they're how other objects find your Pods: ReplicaSets, Deployments and Services all select Pods by label (Module 04). Label every Pod from day one.
+
+**`spec`** is the desired state. There's also a fifth section you never write: **`status`**, the actual state, filled in by the cluster. Desired state in `spec`, actual state in `status`: that split is the reconciliation loop from the overview, made visible.
+
+<Card id="four-top-level-fields" q="What are the four top-level fields of every manifest, and what's the fifth one you never write?">
+
+`apiVersion` (group/version), `kind` (case-sensitive type), `metadata` (name, labels, annotations, namespace), `spec` (desired state). The cluster fills in `status` (actual state).
+
+</Card>
+
+<Card id="apiversion-groups" q="What apiVersion do Pod, Deployment, Job and Ingress use?">
+
+Pod (and Service, ConfigMap, Secret): `v1`, the core group. Deployment/ReplicaSet: `apps/v1`. Job/CronJob: `batch/v1`. Ingress: `networking.k8s.io/v1`. `kubectl explain <kind>` tells you.
+
+</Card>
+
+<Card id="labels-purpose" q="What are labels for, if they do nothing on their own?">
+
+They're key/value tags you choose (`app: hello`). Other objects (ReplicaSets, Deployments, Services) find Pods by selecting on labels, and you filter with `kubectl get pods -l app=hello`.
+
+</Card>
+
+### 2.4 The Pod spec, field by field
+
+<Callout type="note">
+
+**Watch:** 05 › 2 Demo - Pods with YAML (local video)
+
+</Callout>
+
+Here's a realistic single-container Pod for your `hello-k8s` service:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello
+  labels:
+    app: hello
+spec:
+  containers:
+    - name: hello                       # container name, unique within the Pod
+      image: ghcr.io/you/hello-k8s:v1   # registry/repo:tag, exactly as for docker pull
+      imagePullPolicy: IfNotPresent
+      ports:
+        - containerPort: 3000           # documentation + a name for later; doesn't open or block anything
+          name: http
+      env:
+        - name: APP_VERSION
+          value: "v1"
+        - name: COLOR
+          value: "blue"
+```
+
+Field by field:
+
+- **`containers`** is a list, because a Pod can have several (section 2.9). Each needs a `name` and an `image`.
+- **`image`** works like `docker pull`: no registry means Docker Hub, no tag means `:latest`.
+- **`ports.containerPort`** is informational. Your app listens on whatever port it listens on; listing it here doesn't publish it, and leaving it out doesn't block it. List it anyway: it documents the Pod, and Services can refer to the port by `name`.
+- **`env`** is a list of `name`/`value` pairs. Values are strings (quote them).
+- **`imagePullPolicy`**: `IfNotPresent` (use the node's cached copy), `Always` (check the registry on every container start), `Never`. The default is **`Always` if the tag is `:latest` or missing**, otherwise `IfNotPresent`. That's one more reason to pin real tags: with `:latest`, two nodes can run different code.
+
+**`command` and `args` override the image's `ENTRYPOINT` and `CMD`:**
+
+| Docker | Kubernetes | Example |
+|---|---|---|
+| `ENTRYPOINT` | `command` | `command: ["python", "-m", "http.server"]` |
+| `CMD` | `args` | `args: ["8000"]` |
+
+Set only `args` to keep the image's entrypoint and change its arguments. Set `command` to replace the entrypoint entirely.
+
+<Card id="containerport-informational" q="Does containerPort open or block a port?">
+
+Neither. It's documentation (and a name Services can refer to). The app listens on whatever port it binds, whether or not it's listed.
+
+</Card>
+
+<Card id="command-args-vs-docker" q="How do command and args map to Docker's ENTRYPOINT and CMD?">
+
+`command` overrides `ENTRYPOINT`; `args` overrides `CMD`. Set only `args` to keep the image's entrypoint with new arguments.
+
+</Card>
+
+<Card id="imagepullpolicy-default" q="What is the default imagePullPolicy?">
+
+`Always` if the tag is `:latest` or missing; otherwise `IfNotPresent`. Pin real tags so every node runs the same code and restarts don't depend on the registry.
+
+</Card>
+
+### 2.5 Imperative vs declarative
+
+<Callout type="note">
+
+**Watch:** 03 › 5 Reference - Pods, and the end of 05 › 2 (local)
+
+</Callout>
+
+There are three ways to create a Pod:
+
+```bash
+kubectl run hello --image=nginx      # imperative command: "do this now"
+kubectl create -f pod.yaml           # imperative, from a file: "create this; fail if it exists"
+kubectl apply -f pod.yaml            # declarative: "make the cluster match this file"
+```
+
+The video treats `create -f` and `apply -f` as the same. They aren't:
+
+| | `create -f` | `apply -f` |
+|---|---|---|
+| Object doesn't exist | Creates it | Creates it |
+| Object already exists | Error: `AlreadyExists` | Updates it to match the file |
+| Re-runnable | No | Yes: run it ten times, same result |
+| Fits "files in git" | Only for the first time | Always |
+
+**This course uses `apply -f` by default.** The file in your repo is the source of truth; `apply` makes the cluster match it. That's how real teams work, and how GitOps tools like Argo CD work. Imperative commands are for exploring, one-off debugging, and generating YAML (next section).
+
+One historical note from the reference lecture: since Kubernetes 1.18, `kubectl run` creates only a **Pod**. To create a Deployment imperatively you use `kubectl create deployment`.
+
+<Card id="create-vs-apply" q="What's the difference between kubectl create -f and kubectl apply -f?">
+
+`create` fails with AlreadyExists if the object exists; it's a one-time imperative action. `apply` creates or updates the object to match the file and is safe to re-run. Use `apply -f` with files in git as the source of truth.
+
+</Card>
+
+<Card id="kubectl-run-creates-pod" q="What does kubectl run create today?">
+
+Only a Pod (since v1.18). Use `kubectl create deployment` for a Deployment.
+
+</Card>
+
+### 2.6 Generating and validating YAML
+
+<Callout type="note">
+
+**Watch:** 05 › 3 Demo - YAML - Tips (local video)
+
+</Callout>
+
+Nobody types a manifest from a blank file every time. Three tools do most of the work:
+
+**1. Generate a skeleton with `--dry-run=client -o yaml`.** The command builds the object, doesn't send it, and prints it:
+
+```bash
+kubectl run hello --image=ghcr.io/you/hello-k8s:v1 --port=3000 \
+  --env=APP_VERSION=v1 --labels=app=hello \
+  --dry-run=client -o yaml > hello-pod.yaml
+```
+
+Delete the noise (`creationTimestamp: null`, empty `resources: {}`, `status: {}`), edit, commit, `apply`.
+
+**2. Look up any field with `kubectl explain`.** It reads the schema from *your* cluster, so it always matches your version:
+
+```bash
+kubectl explain pod.spec.containers          # fields of a container, with descriptions
+kubectl explain pod.spec.containers.env      # drill down with dots
+kubectl explain pod.spec --recursive | less  # the whole tree, names only
+```
+
+**3. Validate before applying.**
+
+- **In the editor:** VS Code with Red Hat's **YAML** extension. Add `"yaml.schemas": { "kubernetes": "*.yaml" }` to `settings.json` (as in the video) for autocompletion and red squiggles on unknown fields and wrong types.
+- **Against the real API, without changing anything:** `kubectl apply -f pod.yaml --dry-run=server`. The API server runs full validation (and admission checks) and then discards the result. It catches what the editor can't, like a wrong `apiVersion` for your cluster.
+- **In CI:** [kubeconform](https://github.com/yannh/kubeconform) validates manifests against the Kubernetes schemas with no cluster.
+
+Neither the editor nor the API checks that your **image exists** or your **labels make sense**. Those mistakes show up only when the Pod runs.
+
+<Card id="dry-run-generator" q="How do you generate a manifest skeleton instead of typing it?">
+
+Add `--dry-run=client -o yaml` to an imperative command (e.g. `kubectl run hello --image=… --dry-run=client -o yaml > pod.yaml`): it builds the object without sending it and prints the YAML. Then clean it up and `apply -f`.
+
+</Card>
+
+<Card id="dry-run-client-vs-server" q="--dry-run=client vs --dry-run=server?">
+
+`client` builds the object locally and never contacts the API: good for generating YAML. `server` sends it to the API server for full validation and admission, then discards it: good for checking a manifest against your real cluster.
+
+</Card>
+
+<Card id="kubectl-explain" q="What does kubectl explain do, and why prefer it to a web search?">
+
+It prints the schema and docs for any field path (`kubectl explain pod.spec.containers.env`, `--recursive` for the tree), read from your cluster, so it always matches your version.
+
+</Card>
+
+### 2.7 Pod lifecycle: phases, states and statuses
+
+<Callout type="note">
+
+**Watch:** 05 › 15 Solution Pods with YAML Lab (local video): it walks through a Pod stuck on a bad image
+
+</Callout>
+
+When you `apply` a Pod: the API server stores it, the **scheduler** picks a node, the node's **kubelet** asks the container runtime to pull the image and start the containers. Each step can fail, and the STATUS column tells you where.
+
+A Pod has a **phase** (`status.phase`): `Pending` (accepted, not all containers running yet: waiting for a node or for images), `Running` (on a node, at least one container running), `Succeeded` (all containers exited 0 and won't restart), `Failed` (all exited, at least one with an error), `Unknown` (the node stopped reporting).
+
+Each container has a **state**: `Waiting`, `Running` or `Terminated`, with a **reason**. The STATUS column in `kubectl get pods` shows the most useful reason, which is why you see more values than five phases:
+
+| STATUS | What it means | First thing to check |
+|---|---|---|
+| `Pending` | Not scheduled yet (no node fits) or still setting up | `describe` → Events: `FailedScheduling`? |
+| `ContainerCreating` | Scheduled; pulling the image, mounting volumes | Wait; if it lasts, `describe` → Events |
+| `ErrImagePull` → `ImagePullBackOff` | Image pull failed (typo, wrong tag, private registry); kubelet now retries with growing delays | Events: `not found`, `unauthorized` |
+| `Running` | Container process is up. Not necessarily *working* | READY column, logs |
+| `Error` | Container exited non-zero | `logs` |
+| `CrashLoopBackOff` | Keeps exiting; kubelet waits 10 s, 20 s, 40 s... up to 5 min between restarts | `logs --previous` |
+| `Completed` | Exited 0 | Expected for a batch task; for a server, it shouldn't exit |
+| `OOMKilled` | Exceeded its memory limit; the kernel killed it (exit code 137) | Memory limit vs real usage (Module 10) |
+
+**`restartPolicy`** (Pod-level) decides what the kubelet does when a container exits: `Always` (the default; right for servers), `OnFailure` (restart only on non-zero exit; batch jobs), `Never`. With `Always`, even a clean exit 0 is restarted, so a server whose process exits ends up in `CrashLoopBackOff` though it never "crashed".
+
+**READY** shows `ready containers / total containers`. `1/2` means one container in the Pod isn't ready: crashed, still starting, or (from Module 05) failing its readiness probe. A Pod can be `Running` and `0/1` at the same time.
+
+<Card id="pod-phase-vs-container-state" q="Pod phase vs container state: what are the values of each?">
+
+Pod phase: Pending, Running, Succeeded, Failed, Unknown. Container state: Waiting, Running, Terminated, each with a reason. `kubectl get pods` STATUS shows the most useful reason (ImagePullBackOff, CrashLoopBackOff, OOMKilled…).
+
+</Card>
+
+<Card id="crashloopbackoff" q="What does CrashLoopBackOff mean, and what do you run first?">
+
+The container keeps exiting and the kubelet restarts it with exponential backoff (10 s, 20 s, 40 s… capped at 5 min). Run `kubectl logs <pod> --previous` to see what the last run printed before it died.
+
+</Card>
+
+<Card id="restartpolicy" q="What are the restartPolicy values, and why can a server exiting 0 end in CrashLoopBackOff?">
+
+`Always` (default), `OnFailure`, `Never`. With `Always`, the kubelet restarts the container whenever it exits, even with code 0, so a server process that exits keeps being restarted and backs off.
+
+</Card>
+
+### 2.8 Inspecting and debugging Pods with kubectl
+
+<Callout type="note">
+
+**Watch:** 03 › 4 Demo - Pods (local video): describe and get -o wide
+
+</Callout>
+
+The commands of the debug loop (overview), applied to Pods:
+
+```bash
+kubectl get pods                      # status, READY, RESTARTS, age
+kubectl get pods -o wide              # + Pod IP and node
+kubectl get pods -l app=hello         # filter by label
+kubectl get pod hello -o yaml         # the full object: spec AND status, as stored
+kubectl describe pod hello            # human summary + Events (read these first)
+kubectl logs hello                    # stdout/stderr of the container
+kubectl logs hello -f                 # follow
+kubectl logs hello --previous         # the PREVIOUS (crashed) run
+kubectl logs hello -c sidecar         # pick a container in a multi-container Pod
+kubectl exec -it hello -- sh          # a shell inside the container
+kubectl port-forward pod/hello 8080:3000   # localhost:8080 → Pod port 3000
+kubectl delete pod hello              # or: kubectl delete -f hello-pod.yaml
+```
+
+Things worth knowing:
+
+- **Events expire** (about an hour by default). Debug early, or run `kubectl get events --sort-by=.lastTimestamp` to see what's left.
+- **`--previous` is the one people forget.** After a restart, plain `logs` shows the *new* container, which may have printed nothing yet.
+- **`port-forward` is a debugging tunnel**, not a way to expose apps (that's Services). It also connects from *inside* the Pod's network namespace, so it can reach a server bound to `127.0.0.1` and hide that bug. To test the Pod the way other Pods see it, call its IP from another Pod: `kubectl run tmp --rm -it --image=busybox:1.36 -- wget -qO- <pod-ip>:3000`.
+- **Minimal images may have no shell.** `exec ... -- sh` fails on distroless images; `kubectl debug` (later) adds a temporary debugging container.
+
+<Card id="logs-previous" q="A container restarted. Why might kubectl logs show nothing useful, and what do you run instead?">
+
+Plain `logs` shows the current (new) container, which may not have printed anything yet. `kubectl logs <pod> --previous` shows the run that crashed.
+
+</Card>
+
+<Card id="port-forward-hides-localhost" q="Why can kubectl port-forward work even though other Pods can't reach your server?">
+
+port-forward connects from inside the Pod's network namespace, so it reaches a server bound to `127.0.0.1`. Other Pods connect to the Pod IP, which a localhost-bound server doesn't listen on. Test with a temporary Pod calling the Pod IP.
+
+</Card>
+
+### 2.9 Multi-container Pods
+
+<Callout type="note">
+
+**Watch:** the second half of 03 › 3 Pods (local video)
+
+</Callout>
+
+Sometimes a helper must live and die with your app: a log shipper reading its log files, a proxy in front of it, a process that refreshes files it serves. That helper goes in the **same Pod** as a second container: a **sidecar**.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+  labels:
+    app: web
+spec:
+  volumes:
+    - name: html                 # declared once at Pod level...
+      emptyDir: {}               # ...an empty dir that lives as long as the Pod
+  containers:
+    - name: nginx
+      image: nginx:1.27
+      volumeMounts:
+        - name: html             # ...and mounted into each container that needs it
+          mountPath: /usr/share/nginx/html
+    - name: writer
+      image: busybox:1.36
+      command: ["sh", "-c", "while true; do date > /out/index.html; sleep 5; done"]
+      volumeMounts:
+        - name: html
+          mountPath: /out
+```
+
+What the containers share, and what they don't:
+
+- **Network:** shared. `writer` can call `localhost:80` and reach nginx. Two containers in one Pod **can't both listen on the same port**.
+- **Filesystem:** *not* shared by default. Each container has its own image filesystem. They share only the volumes they both mount (here an `emptyDir`, which is deleted with the Pod).
+- **Lifecycle:** shared. They're scheduled together and deleted together. (The kubelet restarts each container individually, though.)
+
+**Init containers** (`spec.initContainers`) run **before** the main containers, one at a time, each to completion: wait for a database, run a migration, fetch config. If one fails, the Pod doesn't start. Recent Kubernetes versions also support **native sidecars**: an init container with `restartPolicy: Always` starts before the app and keeps running alongside it. You'll meet both again; for now, know they exist.
+
+Multi-container Pods are the exception. **Default to one container per Pod**, and add a sidecar only when the helper truly needs to share the app's network or files and lifecycle.
+
+<Card id="sidecar-sharing" q="In a multi-container Pod, what's shared and what isn't?">
+
+Shared: the network namespace (one IP; containers reach each other on `localhost`, and can't both bind the same port), the volumes they both mount (e.g. an `emptyDir`), and the Pod's lifecycle. Not shared: each container's own image filesystem.
+
+</Card>
+
+<Card id="init-containers" q="What are init containers for?">
+
+They run before the main containers, one at a time, each to completion (wait for a dependency, run a migration, fetch config). If one fails, the Pod doesn't start. An init container with `restartPolicy: Always` is a native sidecar.
+
+</Card>
+
+### 2.10 Why you rarely create bare Pods
+
+<Callout type="note">
+
+**Watch:** the start of 05 › 16 Replication Controllers and ReplicaSets (local video), as a preview of Module 04
+
+</Callout>
+
+You've just learned to write Pods, and now the honest part: in real clusters you almost **never create Pods directly**. Two reasons:
+
+1. **A bare Pod doesn't heal.** If it's deleted, evicted, or its node dies, it's gone. Nothing recreates it, because no controller owns it. (The kubelet restarts *containers* inside a Pod that still exists; it doesn't recreate the Pod.)
+2. **Most of a Pod is immutable.** After creation you can change a container's `image` (and a few minor fields), but not its env vars, ports, command or volumes. `kubectl apply` with a changed env var fails with `Forbidden: pod updates may not change fields other than ...`. The only way to "update" a Pod is to delete it and create a new one.
+
+Both problems have the same fix: let a **controller** own the Pods and replace them for you. A ReplicaSet keeps N Pods alive (Module 04); a Deployment replaces them safely when you change the template (Module 05). You'll write the same Pod spec, just nested inside those objects as a **template**. So everything in this module carries over.
+
+<Card id="bare-pods-bad" q="Why do you rarely create bare Pods in practice?">
+
+A bare Pod has no controller, so nothing recreates it when it's deleted, evicted or its node dies. And most Pod fields are immutable (only images and a few others can change), so updates mean delete-and-recreate. ReplicaSets and Deployments fix both.
+
+</Card>
+
+<Card id="kubelet-restart-vs-recreate" q="The kubelet restarts crashed containers. Isn't that self-healing?">
+
+Only within a Pod that still exists on a live node. If the Pod is deleted or evicted, or the node dies, nothing recreates the Pod. That needs a controller (ReplicaSet/Deployment).
+
+</Card>
+
+---
+
+## 3. Drills
+
+Do these in `k8s-journey/03/`, against your kind cluster. Keep every manifest as a file and use `kubectl apply -f`.
+
+<Drill id="d1-json-to-yaml" title="D1. YAML warm-up: JSON to YAML (15 min)">
+
+Convert this JSON to YAML by hand, then check it with `python3 -c 'import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin), indent=2))' < out.yaml` (or an online converter).
+
+```json
+{
+  "server": "api-1",
+  "port": 8080,
+  "tags": ["prod", "eu"],
+  "owners": [
+    { "name": "ana", "role": "lead" },
+    { "name": "ben", "role": "oncall" }
+  ],
+  "limits": { "cpu": "500m", "memory": "256Mi" }
+}
+```
+
+<Answer>
+
+```yaml
+server: api-1
+port: 8080
+tags:
+  - prod
+  - eu
+owners:
+  - name: ana
+    role: lead
+  - name: ben
+    role: oncall
+limits:
+  cpu: 500m
+  memory: 256Mi
+```
+
+The `owners` list of maps is the shape you'll write constantly in Kubernetes (`containers`, `env`, `ports`). `tags` could also be written inline as `tags: [prod, eu]`; both mean the same thing.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-spot-indentation" title="D2. Spot the YAML bugs (15 min)">
+
+This manifest has three structural mistakes. Find them without running it, then confirm with `kubectl apply --dry-run=server -f`.
+
+```yaml
+apiVersion: v1
+kind: pod
+metadata:
+  name: broken
+    labels:
+    app: broken
+spec:
+  containers:
+  - name: web
+    image: nginx:1.27
+     ports:
+      - containerPort: 80
+    env:
+      - name: DEBUG
+        value: true
+```
+
+<Answer>
+
+1. `kind: pod` must be `Pod`: kinds are case-sensitive (`no kind "pod" is registered`).
+2. `labels:` is indented under `name:`, which already has a value: a YAML error (`mapping values are not allowed`). `labels` must be a sibling of `name`, and `app: broken` must be indented under `labels`.
+3. `ports:` has 5 spaces instead of 4, so it isn't aligned with `name`/`image`: another YAML error.
+
+And a fourth, type-level bug: `value: true` is a boolean, so once the YAML parses, the API rejects it (env values must be strings). Fixed:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken
+  labels:
+    app: broken
+spec:
+  containers:
+    - name: web
+      image: nginx:1.27
+      ports:
+        - containerPort: 80
+      env:
+        - name: DEBUG
+          value: "true"
+```
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-pod-from-memory" title="D3. A Pod from memory, then from a generator (25 min)">
+
+1. Without looking anything up, write `nginx-pod.yaml`: a Pod named `nginx` with labels `app: nginx` and `tier: frontend`, one container `nginx` from `nginx:1.27`, port 80. Apply it and check with `kubectl get pods -o wide --show-labels`.
+2. Now generate the same thing: `kubectl run nginx2 --image=nginx:1.27 --port=80 --labels=app=nginx,tier=frontend --dry-run=client -o yaml`. Diff it against yours. What did the generator add?
+3. Run `kubectl get pod nginx -o yaml`. Which top-level section appears that you didn't write? Name three fields Kubernetes filled in.
+
+<Answer>
+
+1.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+    tier: frontend
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.27
+      ports:
+        - containerPort: 80
+```
+
+2. The generator adds `creationTimestamp: null`, `resources: {}`, `dnsPolicy: ClusterFirst`, `restartPolicy: Always` and `status: {}`. The first two and the last are noise to delete; `dnsPolicy` and `restartPolicy` are just defaults. It labels with `run: nginx2` only if you don't pass `--labels`.
+
+3. `status` appears (phase, `podIP`, `hostIP`, `conditions`, `containerStatuses`, `startTime`). In `metadata`, the server adds `uid`, `resourceVersion` and `creationTimestamp`; in `spec`, defaults like `nodeName`, `schedulerName`, `terminationGracePeriodSeconds: 30`, `imagePullPolicy` and a service-account token volume. That's why you keep *your* file in git, not the `-o yaml` dump.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d4-run-hello-k8s" title="D4. Run your own service as a Pod (30 min)">
+
+Write `hello-pod.yaml` for your Module 01 image `ghcr.io/<you>/hello-k8s:v1` with `APP_VERSION=v1`, `COLOR=blue` and `STARTUP_DELAY_SECONDS=3`, label `app: hello`, containerPort 3000 named `http`. Apply it.
+
+1. `kubectl port-forward pod/hello 8080:3000`, then `curl localhost:8080`. What's `host`?
+2. `kubectl logs hello -f` in another terminal while you curl a few times.
+3. `kubectl exec -it hello -- sh`, then run `env | grep -E 'APP_|COLOR'` and `hostname`. (If your image has no shell, use `kubectl exec hello -- env`.)
+
+If the image is private or not pushed, `kind load docker-image ghcr.io/<you>/hello-k8s:v1` copies it from your Docker into the cluster; set `imagePullPolicy: IfNotPresent`.
+
+<Answer>
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello
+  labels:
+    app: hello
+spec:
+  containers:
+    - name: hello
+      image: ghcr.io/you/hello-k8s:v1
+      ports:
+        - containerPort: 3000
+          name: http
+      env:
+        - name: APP_VERSION
+          value: "v1"
+        - name: COLOR
+          value: "blue"
+        - name: STARTUP_DELAY_SECONDS
+          value: "3"
+```
+
+1. `{"version":"v1","color":"blue","host":"hello"}`. The hostname of a Pod is the **Pod name**.
+2. One JSON log line per request appears, because the app logs to stdout and `kubectl logs` reads stdout.
+3. The env vars from the manifest are there, plus ones Kubernetes injects (`KUBERNETES_SERVICE_HOST`, `KUBERNETES_PORT`...). `hostname` prints `hello`.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-broken-pods" title="D5. Three broken Pods (45 min)">
+
+Apply each Pod, then diagnose it **only** with the debug loop (get → describe → logs → exec). For each, write down the STATUS you saw, the line in the output that told you the cause, and the fix.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-1
+spec:
+  containers:
+    - name: web
+      image: nginx:1.277
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-2
+spec:
+  containers:
+    - name: app
+      image: busybox:1.36
+      command: ["sh", "-c", "echo starting; echo missing DATABASE_URL >&2; exit 1"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-3
+  labels:
+    app: broken-3
+spec:
+  containers:
+    - name: web
+      image: python:3.12-alpine
+      command: ["python", "-m", "http.server", "8000", "--bind", "127.0.0.1"]
+      ports:
+        - containerPort: 8000
+```
+
+For `broken-3`, first try `kubectl port-forward pod/broken-3 8000:8000` and curl it. Then test it the way another Pod would.
+
+<Answer>
+
+**broken-1:** STATUS `ErrImagePull`, then `ImagePullBackOff`. `describe` → Events: `Failed to pull image "nginx:1.277": ... not found`. The tag doesn't exist. Fix: `image: nginx:1.27`. Since `image` is mutable, editing the file and re-applying works without deleting the Pod.
+
+**broken-2:** STATUS `Error`, then `CrashLoopBackOff`, with RESTARTS climbing and the gaps between restarts growing. `describe` shows `Last State: Terminated, Reason: Error, Exit Code: 1`. `kubectl logs broken-2 --previous` prints `starting` and `missing DATABASE_URL`. Root cause: the app exits because required config is missing. Fix: provide the env var (and in a real app, make the error message this clear).
+
+**broken-3:** STATUS `Running`, READY `1/1`, no restarts. It looks healthy. `port-forward` + curl **works**, because port-forward connects from inside the Pod's network namespace, where `127.0.0.1` is reachable. Now test from another Pod:
+
+```bash
+kubectl get pod broken-3 -o wide          # note the IP, e.g. 10.244.0.12
+kubectl run tmp --rm -it --image=busybox:1.36 -- wget -qO- -T 3 10.244.0.12:8000
+```
+
+That fails with `Connection refused`: nothing listens on the Pod IP. Root cause: the server is bound to localhost. Fix: `--bind 0.0.0.0`. Because `command` is immutable, apply fails; delete and re-create the Pod.
+
+Lesson: `Running` means the process is up, not that it works. Readiness probes (Module 05) close this gap.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-sidecar-emptydir" title="D6. Two containers, one Pod (30 min)">
+
+Apply the `web` Pod from section 2.9 (nginx + a busybox writer sharing an `emptyDir`).
+
+1. `kubectl get pod web`: what does READY show?
+2. Port-forward to port 80 and curl it twice, 6 seconds apart. What changes?
+3. Run `kubectl exec web -c writer -- wget -qO- localhost:80`. Why does this work from the busybox container?
+4. Run `kubectl exec web -c writer -- ls /usr/share/nginx/html`. Why does it fail?
+5. Delete the Pod and re-create it. Is the old content still there?
+
+<Answer>
+
+1. `2/2`: two containers, both ready.
+2. The page shows a timestamp that changes every 5 seconds: the writer writes into the shared `emptyDir`, nginx serves it from its own mount path.
+3. Both containers share one network namespace, so `localhost:80` in the writer is nginx.
+4. `ls: /usr/share/nginx/html: No such file or directory`. Filesystems aren't shared; only the volume is, and in the writer it's mounted at `/out`.
+5. An `emptyDir` lives exactly as long as the Pod, so the new Pod starts with an empty directory (until the writer runs again). It survives container restarts, not Pod deletion.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d7-immutable-and-no-healing" title="D7. Immutable fields and no self-healing (20 min)">
+
+Using `hello-pod.yaml` from D4:
+
+1. Change `COLOR` to `green` and run `kubectl apply -f hello-pod.yaml`. Read the error carefully: which fields *can* change?
+2. Revert it, change the image tag to `v2`, and apply. What happens to the RESTARTS count? Does the Pod name or IP change?
+3. Delete the Pod with `kubectl delete pod hello`. Wait 30 seconds. `kubectl get pods`. What do you see, and what would you need to make it come back?
+
+<Answer>
+
+1. The apply is rejected with an error like:
+
+```text
+The Pod "hello" is invalid: spec: Forbidden: pod updates may not change fields other than
+`spec.containers[*].image`, `spec.initContainers[*].image`, `spec.activeDeadlineSeconds`,
+`spec.tolerations` (only additions to existing tolerations), `spec.terminationGracePeriodSeconds` ...
+```
+
+Env vars are immutable; images (and a few scheduling/termination fields) are not.
+
+2. The update succeeds. The kubelet kills the container and starts a new one from `v2`, so RESTARTS goes up by 1. The Pod is the same object: same name, same IP, same node. (`curl` now shows `v2`/`green`.)
+
+3. `No resources found`. Nothing recreates it, because no controller owns this Pod. To get self-healing you need a ReplicaSet (Module 04) or a Deployment (Module 05) that owns Pods made from a template.
+
+</Answer>
+
+</Drill>
+
+---
+
+## 4. Build: `hello-k8s` Pod manifests + a debugging journal (2–3 hrs)
+
+<Build id="build-hello-pod-journal" title="hello-k8s Pod manifests and a broken-pods journal">
+
+Two deliverables in your `k8s-journey` repo.
+
+**Part 1: `hello-k8s/k8s/pod.yaml`.** A Pod for your service with:
+- Labels `app: hello-k8s`, `tier: backend`, `version: v1`
+- The `hello-k8s` container from your pinned `v1` image, containerPort 3000 named `http`, env `APP_VERSION`, `COLOR` and `STARTUP_DELAY_SECONDS` (all quoted)
+- A **sidecar** container `pinger` (`busybox:1.36`) that runs `while true; do wget -qO- localhost:3000; echo; sleep 5; done`, so its logs show a response every 5 seconds. (busybox has `wget`, not `curl`; use `curlimages/curl` if you prefer curl.)
+
+**Part 2: `03/broken-pods.md`.** Write three broken Pod manifests of your own (different from D5: for example a wrong `command`, a missing required env var for your hello-k8s app, a private image with no pull secret, a Pod requesting more memory than your node has). Write them one day and diagnose them the next, from a cold start, as if someone else had broken them.
+
+Acceptance:
+- [ ] `kubectl apply -f hello-k8s/k8s/pod.yaml` works on a fresh cluster and the Pod reaches `2/2 Running`
+- [ ] `kubectl logs hello-k8s -c pinger` shows a JSON response every ~5 s
+- [ ] `kubectl apply --dry-run=server -f` passes for every manifest in the repo
+- [ ] Every env value is quoted; the image has a real tag, not `:latest`
+- [ ] `broken-pods.md` has three entries, each with: **symptom** (STATUS, READY, RESTARTS), **commands run** (in order), **the output line that revealed the cause**, **root cause**, **fix**
+- [ ] At least one of the three faults shows `Running` but doesn't work
+- [ ] Committed and pushed
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-scale-pods" type="mcq" answer="c">
+
+Your API needs to handle three times the traffic. What's the right Kubernetes approach?
+
+<Choice id="a">Add two more containers running the same image to the existing Pod</Choice>
+<Choice id="b">Increase the Pod's `containerPort` count to 3</Choice>
+<Choice id="c">Run three Pods, each with one API container</Choice>
+<Choice id="d">Run one Pod with `restartPolicy: Always` three times</Choice>
+
+<Why>You scale with more Pods, which can spread across nodes and fail independently. Copies in one Pod would share one node, collide on the port and die together. See [2.1](#21-what-a-pod-is).</Why>
+
+</Quiz>
+
+<Quiz id="q-yaml-indent-bug" type="bug" line="6">
+
+This manifest fails to parse. Click the line with the indentation error.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web
+spec:
+   containers:
+  - name: web
+    image: nginx:1.27
+```
+
+<Why>`containers` is indented 3 spaces while its list items are at 2, so the items aren't inside it. Children must be indented consistently and more than their parent. See [2.2](#22-yaml-in-ten-minutes).</Why>
+
+</Quiz>
+
+<Quiz id="q-apiversion" type="multi" answer="a,c">
+
+Which pairs of `kind` and `apiVersion` are correct?
+
+<Choice id="a">`kind: Pod` with `apiVersion: v1`</Choice>
+<Choice id="b">`kind: ReplicaSet` with `apiVersion: v1`</Choice>
+<Choice id="c">`kind: Deployment` with `apiVersion: apps/v1`</Choice>
+<Choice id="d">`kind: Service` with `apiVersion: apps/v1`</Choice>
+
+<Why>Pod and Service are in the core group (`v1`); ReplicaSet and Deployment are in `apps/v1`. `kubectl explain <kind>` prints the right version. See [2.3](#23-the-four-top-level-fields).</Why>
+
+</Quiz>
+
+<Quiz id="q-env-quote" type="mcq" answer="b">
+
+`kubectl apply` rejects a Pod whose env has `- name: FEATURE_X` / `value: on`. Why?
+
+<Choice id="a">`FEATURE_X` is a reserved name</Choice>
+<Choice id="b">YAML parses `on` as the boolean `true`, and env values must be strings</Choice>
+<Choice id="c">Env vars can't be set on a Pod, only on a Deployment</Choice>
+<Choice id="d">`value` must be `valueFrom`</Choice>
+
+<Why>Kubernetes YAML follows YAML 1.1, where `on`, `yes`, `true` are booleans. Quote every env value: `value: "on"`. See [2.2](#22-yaml-in-ten-minutes).</Why>
+
+</Quiz>
+
+<Quiz id="q-args-override" type="blank" answer="args">
+
+An image has `ENTRYPOINT ["python", "-m", "http.server"]` and `CMD ["8000"]`. Fill in the field that keeps the entrypoint and serves on port 9000 instead.
+
+```yaml
+containers:
+  - name: web
+    image: my-python-server:1.0
+    ___: ["9000"]
+```
+
+<Why>`args` overrides `CMD` and keeps `ENTRYPOINT`; `command` would replace the entrypoint. See [2.4](#24-the-pod-spec-field-by-field).</Why>
+
+</Quiz>
+
+<Quiz id="q-apply-twice" type="mcq" answer="d">
+
+You run `kubectl create -f pod.yaml`, edit the image tag in the file, and run `kubectl create -f pod.yaml` again. What happens?
+
+<Choice id="a">The Pod is updated to the new image</Choice>
+<Choice id="b">A second Pod with a random suffix is created</Choice>
+<Choice id="c">The old Pod is deleted and a new one created</Choice>
+<Choice id="d">It fails with `AlreadyExists`; `kubectl apply -f` would have updated it</Choice>
+
+<Why>`create` is a one-time imperative action. `apply` makes the live object match the file and is safe to re-run. See [2.5](#25-imperative-vs-declarative).</Why>
+
+</Quiz>
+
+<Quiz id="q-status-meaning" type="mcq" answer="a">
+
+`kubectl get pods` shows `STATUS: CrashLoopBackOff`, `RESTARTS: 6`. What's the most useful next command?
+
+<Choice id="a">`kubectl logs <pod> --previous`</Choice>
+<Choice id="b">`kubectl delete pod <pod>` and re-apply</Choice>
+<Choice id="c">`kubectl port-forward <pod> 8080:3000`</Choice>
+<Choice id="d">`kubectl get nodes`</Choice>
+
+<Why>The container keeps exiting; `--previous` shows what the last (crashed) run printed. `describe` also shows the exit code. Deleting it just hides the evidence. See [2.7](#27-pod-lifecycle-phases-states-and-statuses) and [2.8](#28-inspecting-and-debugging-pods-with-kubectl).</Why>
+
+</Quiz>
+
+<Quiz id="q-debug-order" type="order" answer="get,describe,logs,exec,fix">
+
+Put the debug loop in order.
+
+<Step id="get">`kubectl get pods`: read STATUS, READY, RESTARTS</Step>
+<Step id="describe">`kubectl describe pod`: read the Events</Step>
+<Step id="logs">`kubectl logs` (with `--previous` after a restart)</Step>
+<Step id="exec">`kubectl exec -it … -- sh`: look from inside</Step>
+<Step id="fix">Fix the manifest file and `kubectl apply -f` it</Step>
+
+<Why>Cheapest and broadest first: status, then the cluster's own explanation, then the app's output, then inside the container. Fix the file, not just the live object. See [2.8](#28-inspecting-and-debugging-pods-with-kubectl).</Why>
+
+</Quiz>
+
+<Quiz id="q-sidecar-share" type="multi" answer="a,b,d">
+
+Two containers run in the same Pod. Which are true?
+
+<Choice id="a">One can reach the other on `localhost`</Choice>
+<Choice id="b">They can share files through a volume both containers mount</Choice>
+<Choice id="c">They automatically see each other's whole filesystem</Choice>
+<Choice id="d">They're always scheduled on the same node</Choice>
+<Choice id="e">Both can listen on port 8080</Choice>
+
+<Why>They share a network namespace (so `localhost` works, and ports collide) and a node, and they share only the volumes they mount. See [2.9](#29-multi-container-pods).</Why>
+
+</Quiz>
+
+<Quiz id="q-explain-bare-pod" type="explain">
+
+A teammate deployed the company API as a single bare Pod with `restartPolicy: Always` and says "it's self-healing, the kubelet restarts it." Explain what's wrong with that claim, and what they should use instead.
+
+<Model>
+
+The kubelet only restarts *containers* inside a Pod that still exists on a working node. If the node dies, the Pod is evicted or drained, or someone deletes it, nothing recreates the Pod, because no controller owns it. A bare Pod also can't be updated in place for most fields (only the image), so changing config means delete-and-recreate with downtime. And one Pod is one point of failure. They should use a Deployment with several replicas: its ReplicaSet recreates missing Pods on healthy nodes, and the Deployment rolls out changes safely (Modules 04–05).
+
+</Model>
+
+</Quiz>
+
+---
+
+## 5. Checkpoint
+
+Answer these out loud, without notes. If you get stuck on one, re-read that section.
+
+<Checkpoint>
+<Ask id="cp-what-is-pod" q="What is a Pod, what do its containers share, and why do you scale with more Pods rather than more containers?" section="21-what-a-pod-is">
+
+The smallest deployable unit: one or more containers always scheduled together on one node. They share a network namespace (one IP, `localhost` between them), the Pod's volumes, and a lifecycle. Scaling with more containers in one Pod would pin them to one node, make them collide on ports and die together; separate Pods spread across nodes and fail independently. Pod IPs are ephemeral, so nothing should rely on them.
+
+</Ask>
+<Ask id="cp-yaml-rules" q="Explain YAML maps, lists and lists of maps, the indentation rules, and the quoting traps in Kubernetes manifests." section="22-yaml-in-ten-minutes">
+
+Maps are `key: value` (unordered); lists are `- item` (ordered); a list of maps starts each item with `- ` and lines up its keys after the dash. Siblings share an indent, children are indented more, 2 spaces, no tabs; a key holds a value or children, not both. `---` separates documents. YAML 1.1 turns `yes`/`on`/`true` into booleans, numbers into numbers and `0755` into octal, so quote env values and version-like strings.
+
+</Ask>
+<Ask id="cp-four-fields" q="Name the four top-level fields of a manifest and what goes in each. Where does actual state live?" section="23-the-four-top-level-fields">
+
+`apiVersion` (group/version, e.g. `v1`, `apps/v1`), `kind` (case-sensitive type), `metadata` (name, labels, annotations, namespace; only defined fields), `spec` (desired state, specific to the kind). The cluster writes actual state in `status`. Labels are your own key/value tags that other objects select on.
+
+</Ask>
+<Ask id="cp-pod-spec-fields" q="Walk through a container spec: image, ports, env, command/args, imagePullPolicy. What does each actually do?" section="24-the-pod-spec-field-by-field">
+
+`image` is pulled like docker pull (no tag means latest). `ports.containerPort` is documentation and a name; it doesn't open or block anything. `env` is name/value pairs of strings. `command` overrides ENTRYPOINT and `args` overrides CMD. `imagePullPolicy` defaults to Always for `:latest` or no tag, IfNotPresent otherwise.
+
+</Ask>
+<Ask id="cp-create-apply" q="Compare kubectl run, create -f and apply -f. Which do you use, and how do you avoid typing YAML from scratch?" section="25-imperative-vs-declarative">
+
+`run` and `create -f` are imperative one-shots; `create` fails if the object exists. `apply -f` creates or updates the object to match the file and is re-runnable, so files in git stay the source of truth. Generate skeletons with `--dry-run=client -o yaml`, look up fields with `kubectl explain`, and validate with the editor's schema and `apply --dry-run=server`.
+
+</Ask>
+<Ask id="cp-statuses" q="What do Pending, ContainerCreating, ImagePullBackOff, CrashLoopBackOff, Completed and OOMKilled each tell you, and what do you check first?" section="27-pod-lifecycle-phases-states-and-statuses">
+
+Pending: not scheduled or still setting up; check Events for FailedScheduling. ContainerCreating: pulling images or mounting volumes. ImagePullBackOff: the pull failed (typo, missing tag, auth); Events say why. CrashLoopBackOff: the container keeps exiting and restarts back off up to 5 min; check `logs --previous`. Completed: exited 0, fine for batch, wrong for a server. OOMKilled: exceeded the memory limit (exit 137). READY counts ready containers out of total.
+
+</Ask>
+<Ask id="cp-debug-commands" q="Which kubectl commands do you use to inspect a Pod, and what's the trap with logs and with port-forward?" section="28-inspecting-and-debugging-pods-with-kubectl">
+
+`get` (`-o wide` for IP/node, `-o yaml` for the full object, `-l` to filter), `describe` (read the Events), `logs` (`-f`, `-c`, `--previous`), `exec -it -- sh`, `port-forward`, `delete`. Traps: after a restart plain `logs` shows the new container, so use `--previous`. `port-forward` connects from inside the Pod's network namespace and can hide a localhost-bound server; test from another Pod against the Pod IP.
+
+</Ask>
+<Ask id="cp-multi-container" q="When would you put two containers in one Pod, and what do they share? What are init containers?" section="29-multi-container-pods">
+
+Only when a helper must share the app's network or files and lifecycle: a log shipper, a proxy, a file refresher (a sidecar). They share the network namespace (`localhost`, so no port clashes allowed), the volumes they both mount (e.g. `emptyDir`), and a lifecycle; not their image filesystems. Init containers run to completion, one by one, before the app containers start.
+
+</Ask>
+<Ask id="cp-bare-pods" q="Why are bare Pods a bad idea in production? What's mutable on a running Pod?" section="210-why-you-rarely-create-bare-pods">
+
+No controller owns them, so a deleted or evicted Pod, or one on a dead node, is never recreated; the kubelet only restarts containers within an existing Pod. Most of the spec is immutable: you can change container images (and a few fields like tolerations additions and activeDeadlineSeconds), not env, ports, command or volumes. ReplicaSets and Deployments own Pods via a template and replace them.
+
+</Ask>
+</Checkpoint>
+
+---
+
+## 6. Resources
+
+<Resource href="https://kubernetes.io/docs/concepts/workloads/pods/" type="docs" time="30m" required>Kubernetes docs: Pods (what they are, multi-container Pods, why you use workload resources)</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/" type="docs" time="30m" required>Kubernetes docs: Pod Lifecycle (phases, container states, restart policy)</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/overview/working-with-objects/" type="docs" time="20m">Kubernetes docs: Objects in Kubernetes (spec vs status, required fields, labels)</Resource>
+<Resource href="https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/" type="docs" time="20m">Kubernetes docs: Debug Pods</Resource>
+<Resource href="https://learnxinyminutes.com/docs/yaml/" type="article" time="15m">Learn YAML in Y minutes: every YAML feature on one page</Resource>
+<Resource href="https://github.com/yannh/kubeconform" type="tool">kubeconform: validate manifests against Kubernetes schemas, without a cluster</Resource>

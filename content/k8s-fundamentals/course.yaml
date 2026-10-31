@@ -1,0 +1,116 @@
+title: Kubernetes Fundamentals
+type: course
+summary: Go from "what is a container" to running, updating and debugging real multi-service apps on Kubernetes, locally and in the cloud.
+hoursPerWeek: 6
+labels: { part: Phase, unit: Module }
+overview: overview.mdx
+timeline:
+  - month: 1
+    expect: Explain the control plane and the reconciliation loop from memory. Write Pod, ReplicaSet and Deployment manifests without copying, and roll a Deployment forward and back on your own cluster. Milestone 1 (your own service on a local cluster) is done.
+  - month: 2
+    expect: Wire several services together with Services, DNS, ConfigMaps and Secrets. Debug a broken app with get, describe, logs, events and exec alone. Milestone 2 (the voting app, from your own manifests) runs end to end.
+  - month: 3
+    expect: Stand up a multi-node cluster with kubeadm and a managed cluster in the cloud, and run a production-shaped app on it with probes, resource limits, persistent storage and an Ingress. Milestone 3 is deployed.
+parts:
+  - id: phase-1-foundations
+    title: Foundations
+    goal: Run, scale, update and roll back a stateless app on your own cluster, using kubectl and YAML you wrote yourself.
+    units:
+      - id: "01"
+        title: Containers and Why Orchestration Exists
+        weeks: 1
+        outcome: You can explain what a container really is, build and push an image of your own service, and say which problems an orchestrator solves
+        file: phase-1-foundations/01-containers-and-orchestration.mdx
+        skills: [containers, docker, images]
+      - id: "02"
+        title: Cluster Architecture and Your First Cluster
+        weeks: 1
+        outcome: You can name every control-plane and node component and what it does, explain the reconciliation loop, and run a local cluster with kubectl pointed at it
+        file: phase-1-foundations/02-architecture-and-first-cluster.mdx
+        skills: [k8s-architecture, kubectl, container-runtimes]
+      - id: "03"
+        title: Pods and YAML Manifests
+        weeks: 1.5
+        outcome: You write Pod manifests from memory, create them declaratively, and diagnose a Pod that won't start
+        file: phase-1-foundations/03-pods-and-yaml.mdx
+        skills: [yaml, pods, kubectl-debugging]
+      - id: "04"
+        title: ReplicaSets, Labels and Selectors
+        weeks: 1
+        outcome: You can predict what a ReplicaSet will do when Pods die, are added by hand, or change labels, because you understand selectors
+        file: phase-1-foundations/04-replicasets-labels-selectors.mdx
+        skills: [replicasets, labels-selectors, reconciliation]
+      - id: "05"
+        title: "Deployments: Rollouts and Rollbacks"
+        weeks: 1.5
+        outcome: You ship new versions with zero downtime, control rollout speed, and roll back a bad release in seconds
+        file: phase-1-foundations/05-deployments-rollouts.mdx
+        skills: [deployments, rolling-updates, readiness-probes]
+      - id: milestone-1
+        kind: milestone
+        title: "Milestone 1: Your own service on a local cluster, with a zero-downtime upgrade"
+        weeks: 0.5
+        outcome: One of your backend services runs as a 3-replica Deployment; you upgrade and roll it back while a load loop shows no failed requests
+  - id: phase-2-networking
+    title: Networking, Services and Configuration
+    goal: Connect several services inside the cluster and expose them to users, with configuration kept out of images.
+    units:
+      - id: "06"
+        title: The Kubernetes Networking Model
+        weeks: 0.5
+        outcome: You can explain how any Pod reaches any other Pod, what a CNI plugin does, and why Pod IPs can't be relied on
+        skills: [k8s-networking, cni]
+      - id: "07"
+        title: "Services: ClusterIP, NodePort, LoadBalancer"
+        weeks: 1.5
+        outcome: You pick the right Service type for each case and debug a Service that has no endpoints
+        skills: [services, service-discovery, dns]
+      - id: "08"
+        title: Namespaces, ConfigMaps and Secrets
+        weeks: 1
+        outcome: You keep config and credentials out of images and separate environments with namespaces
+        skills: [namespaces, configmaps, secrets]
+      - id: "09"
+        title: "Microservices on Kubernetes: the Voting App"
+        weeks: 1.5
+        outcome: You deploy a five-service app with Deployments and Services you wrote yourself, and trace a request through it
+        skills: [microservices, k8s-architecture-apps]
+      - id: milestone-2
+        kind: milestone
+        title: "Milestone 2: The voting app from scratch, then broken and fixed"
+        weeks: 0.5
+        outcome: The voting app runs from your own manifests, and you fix five injected faults using only kubectl
+  - id: phase-3-real-clusters
+    title: Real Clusters and Production Basics
+    goal: Run a production-shaped app on a real multi-node cluster and on a managed cloud cluster.
+    units:
+      - id: "10"
+        title: "Health and Resources: Probes, Requests, Limits, Autoscaling"
+        weeks: 1
+        outcome: Your Pods declare what they need and how to check them, and you can explain OOMKilled, CrashLoopBackOff and Pending Pods
+        skills: [probes, resources, autoscaling]
+      - id: "11"
+        title: "Storage: Volumes, PersistentVolumes and StatefulSets"
+        weeks: 1
+        outcome: You run a database on Kubernetes that survives Pod restarts, and you know when not to
+        skills: [volumes, persistent-storage, statefulsets]
+      - id: "12"
+        title: Ingress and Helm
+        weeks: 1
+        outcome: You route HTTP traffic for several services through one Ingress and package your app as a Helm chart
+        skills: [ingress, helm]
+      - id: "13"
+        title: A Multi-Node Cluster with kubeadm
+        weeks: 1
+        outcome: You build a three-node cluster from bare VMs and know what kubeadm set up for you
+        skills: [kubeadm, cluster-setup]
+      - id: "14"
+        title: "Managed Kubernetes: GKE, EKS and AKS"
+        weeks: 1
+        outcome: You create, use and tear down a managed cluster, and know what the cloud provider runs for you
+        skills: [managed-k8s, cloud]
+      - id: milestone-3
+        kind: milestone
+        title: "Milestone 3: A production-shaped app on a cloud cluster"
+        weeks: 1
+        outcome: Your app runs on a managed cluster with probes, limits, persistent storage, an Ingress and a Helm chart, and you tear it all down afterwards

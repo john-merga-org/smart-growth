@@ -1,0 +1,876 @@
+# Module 04: ReplicaSets, Labels and Selectors
+
+**Time:** ~1 week (6 hrs)
+**Prerequisites:** Modules 01–03
+**You'll need:** your 3-node kind cluster from Module 02 (one control plane, two workers), and your public `hello-k8s:v1` and `v2` images from the Module 01 Build. In the manifests below, replace `ghcr.io/YOU/hello-k8s` with your image.
+
+---
+
+## 1. Why it matters (the backend analogy)
+
+In Module 03 you ran Pods by hand. A bare Pod is like starting your API with `node server.js` in a terminal: if it crashes or the machine dies, it stays dead. Nobody is watching it.
+
+A **ReplicaSet** is the watcher. You tell it "there should always be 3 Pods that look like *this*", and a controller makes that true, over and over, forever.
+
+| Backend tool you know | Kubernetes |
+|---|---|
+| `pm2 start app.js -i 3` or a systemd unit with `Restart=always` | A ReplicaSet with `replicas: 3` |
+| pm2 restarts a crashed process on **this** machine | The ReplicaSet replaces a lost Pod on **any** node with room |
+| A process list you filter with `grep` | Labels plus selectors: `kubectl get pods -l app.kubernetes.io/name=hello` |
+| A `WHERE` clause that decides which rows a query touches | A selector decides which Pods a ReplicaSet (and later a Service) owns |
+
+The important idea in this module isn't the ReplicaSet itself. You'll almost never write one by hand, because Deployments (Module 05) create them for you. The important ideas are **the reconcile loop**, which you'll see working for the first time, and **labels and selectors**, which is how nearly every Kubernetes object finds the objects it manages.
+
+<Card id="rs-backend-analogy" q="Backend analogy: what is a ReplicaSet, and how is it better than pm2 or systemd restarts?">
+
+A process supervisor for Pods: "always keep N Pods like this template running". Unlike pm2/systemd, which restart a process on one machine, the ReplicaSet replaces lost Pods on any node in the cluster.
+
+</Card>
+
+<Card id="rs-real-lesson" q="If you rarely write ReplicaSets yourself, why learn them?">
+
+Deployments create and manage ReplicaSets for you, so you need to know what they do. And they're the clearest place to learn the reconcile loop and labels plus selectors, which almost every other object relies on.
+
+</Card>
+
+---
+
+## 2. Concepts
+
+### 2.1 Controllers and the reconcile loop
+
+<Callout type="note">
+
+**Watch:** 05 › 16 Replication Controllers and ReplicaSets (local video)
+
+</Callout>
+
+The video calls controllers "the brain behind Kubernetes". Here's what that means concretely. The ReplicaSet controller runs inside `kube-controller-manager` on the control plane, and does this in a loop:
+
+```text
+loop forever:
+    desired = rs.spec.replicas                         # what you asked for
+    pods    = pods matching rs.spec.selector,
+              not being deleted, owned by this rs
+    if len(pods) < desired:  create (desired - len(pods)) Pods from rs.spec.template
+    if len(pods) > desired:  delete (len(pods) - desired) Pods
+    write the counts into rs.status
+```
+
+It doesn't really poll. It *watches* the API server and wakes up whenever a matching Pod or the ReplicaSet itself changes. But "compare and correct" is the whole idea.
+
+`kubectl get rs` shows the three numbers you'll read all the time:
+
+```text
+NAME    DESIRED   CURRENT   READY   AGE
+hello   3         3         2       40s
+```
+
+- **DESIRED**: `spec.replicas`, what you asked for.
+- **CURRENT**: how many Pods the controller has right now.
+- **READY**: how many of those pass their readiness checks (all containers running and ready; Module 05 adds real readiness probes).
+
+`DESIRED = CURRENT` but `READY` lower means the Pods exist but something is wrong inside them (a crashing app, a bad image). That's a job for the debug loop, not for the ReplicaSet.
+
+<Card id="rs-reconcile-loop" q="What does the ReplicaSet controller do in its loop?">
+
+It counts the Pods that match its selector (not being deleted, owned by it) and compares them with `spec.replicas`. Too few: create Pods from the template. Too many: delete some. Then it updates the status. It's driven by watches on the API server, not polling.
+
+</Card>
+
+<Card id="rs-desired-current-ready" q="In kubectl get rs, what do DESIRED, CURRENT and READY mean, and what does DESIRED = CURRENT > READY tell you?">
+
+DESIRED = `spec.replicas`. CURRENT = Pods the controller has. READY = Pods passing readiness. If the Pods exist but aren't ready, the problem is inside them (crashing app, bad image), so use the debug loop.
+
+</Card>
+
+### 2.2 Why run replicas
+
+<Callout type="note">
+
+**Watch:** 05 › 16 Replication Controllers and ReplicaSets, first half
+
+</Callout>
+
+There are two reasons, and they're different:
+
+1. **Availability.** One Pod is one point of failure: a crash, an OOM kill, a node reboot for patching. With 3 replicas, losing one leaves two serving. Even `replicas: 1` is better than a bare Pod, because the ReplicaSet *replaces* it.
+2. **Load.** More copies share more traffic. A Service (Module 07) spreads requests across them.
+
+Replicas only help availability if they're **spread across nodes**. Three replicas on one node die together with that node. The scheduler spreads Pods of the same ReplicaSet across nodes by default as a soft preference. Topology spread constraints let you require it (later in the course).
+
+<Card id="rs-why-replicas" q="What are the two reasons to run replicas, and what condition does availability depend on?">
+
+Availability (survive a crash or node loss; even `replicas: 1` gets replaced) and load (more copies share traffic). Availability only works if replicas are spread across nodes, which the scheduler prefers by default.
+
+</Card>
+
+### 2.3 ReplicationController: the legacy version
+
+<Callout type="note">
+
+**Watch:** 05 › 16 Replication Controllers and ReplicaSets, the ReplicationController part
+
+</Callout>
+
+The video spends a while on the **ReplicationController** (`apiVersion: v1`, `kind: ReplicationController`). It's the original version of the same idea. It only supports equality-based selectors, and its selector is optional (it defaults to the template's labels). ReplicaSets replaced it, and Deployments manage ReplicaSets, not ReplicationControllers. You may see one in a very old cluster or an old tutorial. Don't write new ones. The rest of this module is about ReplicaSets.
+
+<Card id="rc-legacy" q="ReplicationController vs ReplicaSet: what's the difference, and which should you use?">
+
+ReplicationController (`v1`) is the legacy version: equality-only selectors, and the selector is optional. ReplicaSet (`apps/v1`) requires a selector and supports set-based selectors, and it's what Deployments use. Never write new ReplicationControllers.
+
+</Card>
+
+### 2.4 The ReplicaSet manifest
+
+<Callout type="note">
+
+**Watch:** 05 › 16 Replication Controllers and ReplicaSets, then the debugging part of 05 › 26 Solution - ReplicaSets
+
+</Callout>
+
+A ReplicaSet is a Pod manifest wrapped in a little extra:
+
+```yaml
+apiVersion: apps/v1            # NOT v1: ReplicaSet lives in the "apps" API group
+kind: ReplicaSet
+metadata:
+  name: hello
+  labels:                      # labels on the ReplicaSet itself (for you to filter by)
+    app.kubernetes.io/name: hello
+spec:
+  replicas: 3                  # desired count
+  selector:                    # which Pods this ReplicaSet counts as its own
+    matchLabels:
+      app.kubernetes.io/name: hello
+  template:                    # the Pod to stamp out: a Pod manifest minus apiVersion/kind
+    metadata:
+      labels:
+        app.kubernetes.io/name: hello   # MUST match the selector
+    spec:
+      containers:
+        - name: hello
+          image: ghcr.io/YOU/hello-k8s:v1
+          ports:
+            - containerPort: 3000
+```
+
+Three fields under `spec`, all required in practice:
+
+- **`replicas`**: how many. Defaults to 1 if you leave it out.
+- **`selector`**: how the controller recognizes its Pods. Required for `apps/v1`, and **immutable** after creation.
+- **`template`**: the Pod to create when there are too few. Note the two `metadata` and two `spec` blocks: one for the ReplicaSet, one for the Pod inside it.
+
+Two errors you'll meet, both from the lab:
+
+| Error | Cause | Fix |
+|---|---|---|
+| `no matches for kind "ReplicaSet" in version "v1"` | `apiVersion: v1` | `apiVersion: apps/v1`. When unsure, `kubectl explain replicaset` prints the right group and version at the top |
+| `` spec.template.metadata.labels: Invalid value: ...: `selector` does not match template `labels` `` | The template's labels don't satisfy the selector | Make them match. Otherwise the ReplicaSet would create Pods it doesn't count as its own, forever |
+
+The labels on the ReplicaSet's own `metadata` don't matter to the controller. Only **selector ↔ template labels** ties things together.
+
+Why is the template required even if matching Pods already exist? Because the moment one dies, the controller needs to know how to build a replacement.
+
+<Card id="rs-manifest-fields" q="What are the three key fields of a ReplicaSet's spec, and what does each do?">
+
+`replicas` (desired count, default 1), `selector` (which Pods count as its own; required and immutable in apps/v1), `template` (the Pod to create when there are too few). The template's labels must match the selector.
+
+</Card>
+
+<Card id="rs-two-errors" q="What causes 'no matches for kind ReplicaSet in version v1' and 'selector does not match template labels'?">
+
+The first: `apiVersion: v1` instead of `apps/v1` (check with `kubectl explain replicaset`). The second: the Pod template's labels don't satisfy the selector, so the ReplicaSet would never count the Pods it creates. The API server rejects it.
+
+</Card>
+
+### 2.5 Labels and annotations
+
+<Callout type="note">
+
+**Watch:** 05 › 16 Replication Controllers and ReplicaSets, the "labels and selectors" part
+
+</Callout>
+
+**Labels** are key/value pairs on any object, meant for **identifying and selecting**. Selectors only ever match labels. **Annotations** are key/value pairs for **everything else**: notes for tools and humans that nothing selects on.
+
+| | Labels | Annotations |
+|---|---|---|
+| Purpose | Identify and group objects; selectors match them | Attach non-identifying metadata |
+| Used by | ReplicaSets, Deployments, Services, `kubectl -l` | Tools and people: change causes, build info, ingress settings |
+| Limits | Value at most 63 chars, restricted characters | Values can be large (up to 256 KB total) |
+| Example | `app.kubernetes.io/name: hello` | `kubernetes.io/change-cause: "bump to v2"` |
+
+Keys can have a prefix: `app.kubernetes.io/name`. The `kubernetes.io/` and `k8s.io/` prefixes are reserved for Kubernetes itself.
+
+Use the **recommended labels** instead of inventing `app`, `tier`, `env` in every project. Tools like dashboards and Helm understand them:
+
+```yaml
+metadata:
+  labels:
+    app.kubernetes.io/name: hello          # the application
+    app.kubernetes.io/instance: hello-prod # this particular install of it
+    app.kubernetes.io/version: "1.0.0"     # the app version (quoted: it's a string)
+    app.kubernetes.io/component: api       # its role in the architecture
+    app.kubernetes.io/part-of: k8s-journey # the larger system it belongs to
+```
+
+One professional rule: **don't put `version` in a selector.** A selector is immutable, and the version changes on every release. Select on the stable labels (`name`, `instance`), and keep `version` as plain information.
+
+<Card id="labels-vs-annotations" q="Labels vs annotations: what's each for?">
+
+Labels identify and group objects, and selectors match them (short, restricted values). Annotations hold non-identifying metadata for tools and people, such as change causes and build info, and nothing selects on them (values can be large).
+
+</Card>
+
+<Card id="recommended-labels" q="Name the five recommended app.kubernetes.io labels, and which one must never go in a selector.">
+
+`name`, `instance`, `version`, `component`, `part-of`. Never select on `version`: selectors are immutable and the version changes every release.
+
+</Card>
+
+### 2.6 Label selectors
+
+<Callout type="note">
+
+**Watch:** 05 › 16 Replication Controllers and ReplicaSets, the selector part
+
+</Callout>
+
+A selector is a query over labels. There are two kinds.
+
+**Equality-based:** `=`, `==`, `!=`.
+
+**Set-based:** `in`, `notin`, and exists/doesn't exist.
+
+In a ReplicaSet (and Deployments, Jobs, and so on), `matchLabels` and `matchExpressions` are **ANDed**:
+
+```yaml
+selector:
+  matchLabels:
+    app.kubernetes.io/name: hello
+  matchExpressions:
+    - { key: app.kubernetes.io/component, operator: In, values: [api, worker] }
+    - { key: track, operator: NotIn, values: [canary] }
+    - { key: app.kubernetes.io/instance, operator: Exists }
+    - { key: quarantine, operator: DoesNotExist }
+```
+
+On the command line, the same queries:
+
+```bash
+kubectl get pods --show-labels                         # every label on every Pod
+kubectl get pods -L app.kubernetes.io/version          # add a column for one label
+kubectl get pods -l app.kubernetes.io/name=hello       # equality
+kubectl get pods -l 'app.kubernetes.io/name=hello,track!=canary'   # comma = AND
+kubectl get pods -l 'app.kubernetes.io/component in (api,worker)'  # set-based
+kubectl get pods -l '!quarantine'                      # label doesn't exist
+kubectl label pod hello-x7k2p track=canary             # add a label
+kubectl label pod hello-x7k2p track=stable --overwrite # change one (needs --overwrite)
+kubectl label pod hello-x7k2p track-                   # remove one (trailing dash)
+```
+
+The same mechanism shows up everywhere: Services pick their backends by selector (Module 07), Deployments own ReplicaSets by selector, and `kubectl delete pods -l …` deletes by selector. Learn it once here.
+
+<Card id="selector-kinds" q="What are equality-based and set-based selectors, and how do matchLabels and matchExpressions combine?">
+
+Equality-based: `=`, `==`, `!=`. Set-based: `In`, `NotIn`, `Exists`, `DoesNotExist`. In a ReplicaSet selector, all `matchLabels` and `matchExpressions` must hold together (AND).
+
+</Card>
+
+<Card id="kubectl-label-flags" q="Which kubectl flags show, filter and change labels?">
+
+`--show-labels` (all labels), `-L key` (a column for one label), `-l selector` (filter, e.g. `-l 'a=b,c in (x,y)'`). `kubectl label pod P k=v` adds a label, `--overwrite` changes an existing one, `k-` removes it.
+
+</Card>
+
+### 2.7 Ownership: adoption, extras and garbage collection
+
+<Callout type="note">
+
+**Watch:** 05 › 17 Demo - ReplicaSets (local video)
+
+</Callout>
+
+The selector is a *query*, not a list of Pods the ReplicaSet created. That has surprising consequences, and the demo shows two of them.
+
+**Adoption.** If bare Pods matching the selector already exist when you create a ReplicaSet, it **adopts** them and creates only the missing ones. Three matching bare Pods plus `replicas: 3` means it creates nothing.
+
+**Extras get deleted.** If you create a bare Pod whose labels match an existing ReplicaSet's selector, the ReplicaSet now sees 4 where it wants 3, adopts the new Pod and deletes one. In the demo, the hand-made `nginx-2` Pod went straight to `Terminating`.
+
+How does a Pod "belong" to a ReplicaSet? Through **`metadata.ownerReferences`**:
+
+```bash
+kubectl get pod hello-x7k2p -o jsonpath='{.metadata.ownerReferences[0].kind}/{.metadata.ownerReferences[0].name}'
+# ReplicaSet/hello
+```
+
+The controller only adopts Pods that have **no controller owner yet**, so two ReplicaSets with overlapping selectors won't steal each other's Pods. They will fight over new ones, though, so never let selectors overlap.
+
+**Garbage collection.** Deleting an owner deletes what it owns. `kubectl delete rs hello` deletes its Pods too. To delete only the ReplicaSet and leave the Pods running as bare Pods:
+
+```bash
+kubectl delete rs hello --cascade=orphan
+```
+
+**The quarantine trick.** One Pod is misbehaving and you want to debug it without it serving traffic or being killed. Change its label so it no longer matches:
+
+```bash
+kubectl label pod hello-x7k2p app.kubernetes.io/name=hello-debug --overwrite
+```
+
+The ReplicaSet releases it (removes its ownerReference) and creates a fresh replacement, so capacity is restored. Once a Service also selects on that label (Module 07), the Pod stops getting traffic too. You can now `exec` into it and poke around at leisure. Delete it by hand when you're done, because nothing owns it anymore.
+
+<Card id="rs-adoption-extras" q="What happens if matching bare Pods exist when a ReplicaSet is created? And if you create a matching bare Pod later?">
+
+It adopts existing matching Pods (with no controller owner) and creates only the missing ones. A matching Pod created later is adopted too, making one too many, so the ReplicaSet deletes one. The selector is a query, not a list of Pods it created.
+
+</Card>
+
+<Card id="rs-owner-gc" q="How does a Pod record its owner, and how do you delete a ReplicaSet but keep its Pods?">
+
+`metadata.ownerReferences` points at the owning ReplicaSet. Deleting the owner garbage-collects its Pods, unless you use `kubectl delete rs NAME --cascade=orphan`, which leaves them as bare Pods.
+
+</Card>
+
+<Card id="rs-quarantine" q="How do you take one misbehaving Pod out of a ReplicaSet to debug it?">
+
+Relabel it so it no longer matches the selector (`kubectl label pod P app.kubernetes.io/name=hello-debug --overwrite`). The ReplicaSet releases it and creates a replacement; a Service selecting on that label stops sending it traffic. Delete it by hand afterwards.
+
+</Card>
+
+### 2.8 Scaling a ReplicaSet
+
+<Callout type="note">
+
+**Watch:** the end of 05 › 17 Demo - ReplicaSets
+
+</Callout>
+
+Three ways to go from 3 to 6 replicas:
+
+```bash
+# 1. Edit the file (replicas: 6) and apply it: the declarative way
+kubectl apply -f hello-rs.yaml
+
+# 2. Imperative scale
+kubectl scale rs hello --replicas=6
+kubectl scale --replicas=6 -f hello-rs.yaml   # same thing; the FILE is not changed
+
+# 3. Edit the live object in an editor
+kubectl edit rs hello
+```
+
+Options 2 and 3 change the **live object** and leave your file saying `replicas: 3`. The next time anyone runs `kubectl apply -f hello-rs.yaml`, the cluster quietly scales back to 3. This is **file drift**, and it's why this course says: change the file, then apply. Use `scale` and `edit` for quick experiments and emergencies, and copy the change back into the file afterwards.
+
+(Automatic scaling based on load, the HorizontalPodAutoscaler, comes in Module 10.)
+
+<Card id="rs-scaling-drift" q="Three ways to scale a ReplicaSet, and what is file drift?">
+
+Edit `replicas` in the file and `kubectl apply -f`; `kubectl scale rs NAME --replicas=N`; `kubectl edit rs NAME`. The last two change only the live object, so the file still says the old number and the next `apply` silently reverts it. Change the file, then apply.
+
+</Card>
+
+### 2.9 What a ReplicaSet does not do
+
+<Callout type="note">
+
+**Watch:** the "fix the original replica set" part of 05 › 26 Solution - ReplicaSets
+
+</Callout>
+
+The lab's most important lesson is easy to miss. You fix the image in a ReplicaSet's template with `kubectl edit`, save, and... nothing happens. The broken Pods keep running the broken image.
+
+That's the reconcile loop doing exactly what it promises. It compares **counts**, not contents. It wants 4 Pods matching the selector, and there are 4. Whether they match the *current template* isn't its concern. The template is only used when a **new** Pod is created. In the lab you had to delete the Pods by hand so the replacements would get the new image.
+
+Deleting every Pod at once to push a new version means downtime. Deleting them one by one while checking that each replacement is healthy is a rolling update, and doing it by hand is exactly the kind of scripting Kubernetes is supposed to spare you. That's what **Deployments** do (Module 05): they manage two ReplicaSets, the old template and the new one, and shift Pods between them gradually. That's why, in practice, **you don't create ReplicaSets directly**.
+
+<Card id="rs-no-updates" q="You change a ReplicaSet's template image. What happens to the running Pods, and why?">
+
+Nothing. The controller compares counts, not contents, and only uses the template for new Pods. Old Pods keep the old image until they're deleted. Doing that gradually and safely is what a Deployment does, by managing two ReplicaSets.
+
+</Card>
+
+### 2.10 Self-healing across nodes
+
+<Callout type="note">
+
+**Watch:** 05 › 16 Replication Controllers and ReplicaSets, the part where the ReplicaSet "spans multiple nodes"
+
+</Callout>
+
+A ReplicaSet isn't tied to a node. When Pods are lost, the replacements go wherever the scheduler finds room. But "a node died" isn't detected instantly, and the delay surprises everyone the first time:
+
+1. The node's kubelet stops sending heartbeats.
+2. After the **node monitor grace period** (about 40–50 s by default), the node controller marks the node `NotReady` (status `Unknown`) and adds the taint `node.kubernetes.io/unreachable`.
+3. Every Pod automatically gets a **toleration** for that taint with `tolerationSeconds: 300`. So the Pods stay bound to the dead node for **5 more minutes**, in case it's just a network blip.
+4. After that, the Pods are evicted (marked for deletion). The ReplicaSet stops counting them and creates replacements, which the scheduler puts on healthy nodes.
+5. The old Pods show `Terminating` until the node comes back and its kubelet confirms they're gone, because the control plane can't be sure they've stopped.
+
+So with default settings, losing a node costs you its Pods for **about 5–6 minutes**. That's another reason to run several replicas spread across nodes: the others carry the traffic while that happens. You can see the tolerations on any Pod with `kubectl get pod P -o yaml | grep -A3 tolerations`.
+
+<Card id="node-failure-timeline" q="A worker node dies. Roughly how long until its ReplicaSet Pods are replaced elsewhere, and why?">
+
+About 5–6 minutes by default. The node is marked NotReady/unreachable after the ~40–50 s grace period, then each Pod's default toleration for the `unreachable` taint (`tolerationSeconds: 300`) keeps it bound for 5 minutes before eviction. Then the ReplicaSet creates replacements on healthy nodes.
+
+</Card>
+
+<Card id="node-failure-terminating" q="Why do Pods on a dead node stay in Terminating?">
+
+The control plane can't confirm they've actually stopped, since the node's kubelet is unreachable. They're cleared once the node comes back (or is deleted). Meanwhile the ReplicaSet has already created replacements.
+
+</Card>
+
+---
+
+## 3. Drills
+
+Do these in `k8s-journey/04/`, on your kind cluster. Keep `kubectl get pods -o wide -w` running in a second terminal for every drill: watching the cluster react is the point.
+
+<Drill id="d1-rs-from-memory" title="D1. A ReplicaSet from memory (20 min)">
+
+Without looking at section 2.4, write `hello-rs.yaml`: a ReplicaSet named `hello` running 3 replicas of your `hello-k8s:v1` image, with the label `app.kubernetes.io/name: hello` and `app.kubernetes.io/version: "1.0.0"` on the Pods. Apply it, then check it with `kubectl get rs`, `kubectl get pods -o wide --show-labels` and `kubectl describe rs hello`.
+
+Which nodes did the Pods land on? Which labels belong in the selector?
+
+<Answer>
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: hello
+  labels:
+    app.kubernetes.io/name: hello
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hello
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hello
+        app.kubernetes.io/version: "1.0.0"
+    spec:
+      containers:
+        - name: hello
+          image: ghcr.io/YOU/hello-k8s:v1
+          ports:
+            - containerPort: 3000
+```
+
+`kubectl get rs` shows `3 3 3`. The Pods are named `hello-xxxxx` (the ReplicaSet name plus a random suffix) and are spread over the two **worker** nodes. None land on the control plane, which in a multi-node kind cluster keeps its `NoSchedule` taint. `describe` shows the selector, the Pod template and `SuccessfulCreate` events.
+
+Only `app.kubernetes.io/name` goes in the selector. `version` will change on every release, and selectors are immutable. The version is fine as an extra Pod label: a Pod may have more labels than the selector requires.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-self-healing" title="D2. Self-healing (15 min)">
+
+With your ReplicaSet running:
+
+1. Predict, then delete one Pod: `kubectl delete pod <one-of-them>`. What appears in the watch window?
+2. Delete **all** of them at once: `kubectl delete pods -l app.kubernetes.io/name=hello`. How long until 3 are `Running` again?
+3. Run `kubectl describe rs hello`. What do the Events show?
+
+<Answer>
+
+1. The deleted Pod goes `Terminating`, and almost immediately a new Pod with a new random suffix appears (`Pending` → `ContainerCreating` → `Running`). The replacement starts before the old one has finished terminating, because the controller ignores Pods that are being deleted.
+2. Three new Pods appear within a second or two and are `Running` in a few seconds (the image is already cached on the nodes). Your service was completely down in between: self-healing is not zero downtime.
+3. A series of `SuccessfulCreate` events (`Created pod: hello-…`), one per replacement.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-adoption-and-extras" title="D3. Adoption and extras (30 min)">
+
+Part A. With the ReplicaSet running, create a **bare** Pod (`kind: Pod`, your v1 image) named `intruder` with the label `app.kubernetes.io/name: hello`. Predict what happens, then apply it and watch. What does `kubectl describe rs hello` say?
+
+Part B. Delete the ReplicaSet (`kubectl delete rs hello`). Now create **two** bare Pods with the matching label, named `bare-1` and `bare-2`. Predict how many Pods will exist after you `kubectl apply -f hello-rs.yaml` (replicas: 3). Apply it and check. Then check the ownerReferences of `bare-1`.
+
+<Answer>
+
+**A.** `intruder` is created and goes to `Terminating` within a second. The ReplicaSet adopted it (it had no owner and matched the selector), counted 4, and deleted one. Often it's the newest Pod, `intruder` itself, as in the video. `describe rs` shows `SuccessfulDelete … Deleted pod: intruder`.
+
+**B.** Three Pods total. The ReplicaSet adopts `bare-1` and `bare-2` and creates only **one** new Pod. `kubectl get pod bare-1 -o jsonpath='{.metadata.ownerReferences[0].name}'` prints `hello`: it's now owned by the ReplicaSet, and deleting the ReplicaSet will delete it too.
+
+Lesson: a selector is a query over the whole namespace. Never let a ReplicaSet's selector match Pods it isn't meant to manage.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d4-fix-broken-manifests" title="D4. Fix two broken ReplicaSets (20 min)">
+
+Each of these fails to apply. Apply it, read the error, fix it, apply again.
+
+```yaml
+# rs-broken-1.yaml
+apiVersion: v1
+kind: ReplicaSet
+metadata:
+  name: broken-one
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: broken-one
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: broken-one
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+```
+
+```yaml
+# rs-broken-2.yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: broken-two
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: broken-two
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+```
+
+Clean up both afterwards.
+
+<Answer>
+
+**1.** `error: resource mapping not found for name: "broken-one" ... no matches for kind "ReplicaSet" in version "v1"`. ReplicaSet is in the `apps` group: change to `apiVersion: apps/v1`. If you don't remember, `kubectl explain replicaset | head -3` shows `GROUP: apps, VERSION: v1`.
+
+**2.** `The ReplicaSet "broken-two" is invalid: spec.template.metadata.labels: Invalid value: map[string]string{"app.kubernetes.io/name":"web"}: selector does not match template labels`. Make the template label `app.kubernetes.io/name: broken-two` (or change the selector to `web`; either works as long as they match).
+
+Clean up: `kubectl delete -f rs-broken-1.yaml -f rs-broken-2.yaml`.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-quarantine" title="D5. Quarantine a Pod (20 min)">
+
+Pretend one of your `hello` Pods is misbehaving.
+
+1. Relabel it so it leaves the ReplicaSet: `kubectl label pod <name> app.kubernetes.io/name=hello-debug --overwrite`.
+2. What happens in the watch window? How many Pods have `app.kubernetes.io/name=hello` now, and how many Pods exist in total?
+3. Check the relabeled Pod's ownerReferences. `exec` into it (`kubectl exec -it <name> -- sh`, or `wget -qO- localhost:3000` if the image has no shell tools you like).
+4. Clean it up. What do you have to do, and why?
+
+<Answer>
+
+2. A new `hello-…` Pod is created immediately. `kubectl get pods -l app.kubernetes.io/name=hello` shows 3; `kubectl get pods` shows 4 in total. The relabeled Pod keeps running.
+
+3. Its `ownerReferences` is gone (`kubectl get pod <name> -o jsonpath='{.metadata.ownerReferences}'` prints nothing). The ReplicaSet released it when it stopped matching. It's now a bare Pod you can inspect without affecting capacity. Once a Service selects on `app.kubernetes.io/name=hello` (Module 07), it would also stop receiving traffic.
+
+4. `kubectl delete pod <name>`. Nothing owns it anymore, so nothing will clean it up for you. Quarantined Pods left behind are a classic source of mystery Pods in real clusters.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-template-change" title="D6. A template change that changes nothing (20 min)">
+
+1. Edit `hello-rs.yaml` so the template uses your `:v2` image. Apply it.
+2. Run `kubectl get pods -L app.kubernetes.io/version` and check which image each Pod runs: `kubectl get pods -o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[0].image`.
+3. Delete **one** Pod. What image does its replacement run?
+4. Explain what you'd have to do to move all 3 Pods to v2 without downtime, and why that's Module 05's job.
+
+<Answer>
+
+1–2. `apply` reports `replicaset.apps/hello configured`, but every running Pod still shows `:v1`. The controller only counts Pods; it doesn't compare them with the template.
+
+3. The replacement runs `:v2`. New Pods come from the current template. You now have a mixed set: two v1 and one v2.
+
+4. By hand: delete one old Pod, wait until its v2 replacement is Running and ready, then the next, and so on, and if v2 is broken, put v1 back in the template and repeat in reverse. That's a rolling update. A Deployment automates exactly this by creating a new ReplicaSet for the new template and scaling it up while scaling the old one down, with history for rollbacks.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d7-node-failure" title="D7. Kill a node and time the recovery (25 min, mostly waiting)">
+
+1. Scale to 4 replicas so both workers have Pods: `kubectl scale rs hello --replicas=4`. Note which Pods are on which worker (`-o wide`).
+2. Kill one worker node. In kind, a node is a Docker container: `docker stop lab-worker2` (check the names with `docker ps`). Note the time.
+3. Watch `kubectl get nodes -w` and `kubectl get pods -o wide -w`. Write down when the node turns `NotReady`, and when the Pods on it get replaced.
+4. Bring it back with `docker start lab-worker2`. What happens to the old Pods?
+5. Your file still says `replicas: 3`. What should you do about that?
+
+<Answer>
+
+3. The node shows `NotReady` after roughly **40–50 seconds**. Its Pods keep showing `Running` (the control plane has no fresh information) for about **5 more minutes**. Then they turn `Terminating`, and replacements appear on the surviving worker. The total is about 5½–6 minutes.
+
+Why: after the node monitor grace period, the node controller marks the node unreachable and taints it `node.kubernetes.io/unreachable:NoExecute`. Each Pod has a default toleration for that taint with `tolerationSeconds: 300` (see `kubectl get pod <name> -o yaml`), so eviction waits 5 minutes in case the node comes back.
+
+4. The node turns `Ready` again. Its kubelet sees that its old Pods were deleted and removes them, so the `Terminating` Pods disappear. Nothing moves back: the replacements stay where they are, and the ReplicaSet still has exactly 4.
+
+5. That was file drift from `kubectl scale`. Either set `replicas: 4` in the file or apply the file to go back to 3. The file should always be the truth.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d8-orphan-delete" title="D8. Delete the owner, keep the Pods (10 min)">
+
+1. Run `kubectl delete rs hello --cascade=orphan`. What happens to the Pods?
+2. Check one Pod's ownerReferences.
+3. Re-apply `hello-rs.yaml`. How many new Pods are created? Why?
+4. Finally, `kubectl delete rs hello`. What's left?
+
+<Answer>
+
+1. The ReplicaSet is gone; the Pods keep running untouched.
+2. `ownerReferences` is empty: they're bare Pods now.
+3. Zero new Pods (if there are at least 3; extras are deleted if there are more). The new ReplicaSet adopts the orphans because they match its selector and have no controller owner.
+4. Nothing: the default cascade deletes the ReplicaSet and every Pod it owns, including the adopted ones. (Delete any quarantined Pods from D5 by hand.)
+
+</Answer>
+
+</Drill>
+
+---
+
+## 4. Build: the hello-k8s ReplicaSet and an experiment log (2 hrs)
+
+<Build id="build-hello-rs-experiments" title="hello-k8s ReplicaSet and experiment log">
+
+Add two files to `k8s-journey/hello-k8s/k8s/` in your repo.
+
+**`replicaset.yaml`**: a ReplicaSet for hello-k8s.
+
+**`experiments.md`**: for each experiment, write your **prediction before running it**, then what actually happened (paste the relevant `kubectl` output), then one sentence explaining any difference. Experiments:
+1. Delete one Pod; delete all Pods.
+2. Create a matching bare Pod while the ReplicaSet runs; create the ReplicaSet while matching bare Pods exist.
+3. Quarantine a Pod by relabeling it.
+4. Stop a worker node; time how long until its Pods are replaced.
+
+End `experiments.md` with a short paragraph: **why won't you use bare ReplicaSets in real projects?**
+
+Acceptance:
+- [ ] `apiVersion: apps/v1`, 3 replicas, your public `hello-k8s:v1` image, `containerPort: 3000`
+- [ ] All five recommended `app.kubernetes.io/*` labels on the Pod template
+- [ ] The selector uses only stable labels (`name` and `instance`), not `version`
+- [ ] `kubectl apply -f replicaset.yaml` works on a fresh cluster, and `kubectl get rs` shows `3 3 3`
+- [ ] Four experiments, each with a prediction, real output and an explanation
+- [ ] The node-failure experiment records the NotReady time and the replacement time, and explains the 300 s toleration
+- [ ] The closing paragraph explains that ReplicaSets don't update existing Pods, so rolling updates need a Deployment
+- [ ] No leftover quarantined or orphaned Pods in the cluster (`kubectl get pods --show-labels`)
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-rs-apiversion" type="mcq" answer="b">
+
+`kubectl apply` fails with `no matches for kind "ReplicaSet" in version "v1"`. What's wrong?
+
+<Choice id="a">The cluster doesn't support ReplicaSets</Choice>
+<Choice id="b">The manifest says `apiVersion: v1`; ReplicaSets are in `apps/v1`</Choice>
+<Choice id="c">`kind` should be `replicaset` in lowercase</Choice>
+<Choice id="d">The selector is missing</Choice>
+
+<Why>ReplicaSet lives in the `apps` API group, so its apiVersion is `apps/v1`. `kubectl explain replicaset` shows it. See [2.4](#24-the-replicaset-manifest).</Why>
+
+</Quiz>
+
+<Quiz id="q-rs-bug-selector" type="bug" line="13">
+
+The API server rejects this ReplicaSet. Click the line that causes it.
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: hello
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hello
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helo
+    spec:
+      containers:
+        - name: hello
+          image: ghcr.io/you/hello-k8s:v1
+```
+
+<Why>The template label `helo` doesn't match the selector `hello`, so the ReplicaSet would never count the Pods it creates: "selector does not match template labels". See [2.4](#24-the-replicaset-manifest).</Why>
+
+</Quiz>
+
+<Quiz id="q-rs-intruder-count" type="output" answer="3">
+
+A ReplicaSet with `replicas: 3` and selector `app.kubernetes.io/name: hello` has 3 Pods running. You run the following. How many Pods are listed a few seconds later?
+
+```bash
+kubectl run intruder --image=nginx --labels=app.kubernetes.io/name=hello
+sleep 10
+kubectl get pods -l app.kubernetes.io/name=hello --no-headers | wc -l
+```
+
+<Why>The ReplicaSet adopts the matching bare Pod, sees 4 where it wants 3, and deletes one. See [2.7](#27-ownership-adoption-extras-and-garbage-collection).</Why>
+
+</Quiz>
+
+<Quiz id="q-rs-template-image" type="mcq" answer="c">
+
+You `kubectl edit` a running ReplicaSet and change the template's image from `:v1` to `:v2`. What happens to the 3 running Pods?
+
+<Choice id="a">They're all restarted with `:v2` at once</Choice>
+<Choice id="b">They're replaced one at a time with `:v2`</Choice>
+<Choice id="c">Nothing; only Pods created from now on use `:v2`</Choice>
+<Choice id="d">The edit is rejected because the template is immutable</Choice>
+
+<Why>The controller compares counts, not contents; the template is only used to create new Pods. Gradual replacement is a Deployment's job. See [2.9](#29-what-a-replicaset-does-not-do).</Why>
+
+</Quiz>
+
+<Quiz id="q-selector-true" type="multi" answer="a,c,d">
+
+Which statements about labels and selectors are true?
+
+<Choice id="a">`matchLabels` and `matchExpressions` in one selector are ANDed</Choice>
+<Choice id="b">A ReplicaSet's selector can be changed freely after creation</Choice>
+<Choice id="c">`kubectl get pods -l '!quarantine'` lists Pods that have no `quarantine` label</Choice>
+<Choice id="d">Changing an existing label with `kubectl label` needs `--overwrite`</Choice>
+<Choice id="e">Annotations can be used in a ReplicaSet selector</Choice>
+
+<Why>Selectors are immutable in `apps/v1`, and selectors match labels only, never annotations. See [2.5](#25-labels-and-annotations) and [2.6](#26-label-selectors).</Why>
+
+</Quiz>
+
+<Quiz id="q-orphan-blank" type="blank" answer="orphan">
+
+Delete the ReplicaSet `hello` but leave its Pods running.
+
+```bash
+kubectl delete rs hello --cascade=___
+```
+
+<Why>`--cascade=orphan` deletes the owner and strips the ownerReferences from its Pods instead of garbage-collecting them. See [2.7](#27-ownership-adoption-extras-and-garbage-collection).</Why>
+
+</Quiz>
+
+<Quiz id="q-node-failure-order" type="order" answer="heartbeat,notready,toleration,evict,replace">
+
+A worker node loses power. Put the events in order.
+
+<Step id="heartbeat">The node's kubelet stops sending heartbeats</Step>
+<Step id="notready">After the grace period, the node is marked NotReady and tainted `unreachable`</Step>
+<Step id="toleration">The Pods' default 300 s toleration for the taint runs out</Step>
+<Step id="evict">The Pods on the node are evicted (marked for deletion)</Step>
+<Step id="replace">The ReplicaSet creates replacements and the scheduler places them on healthy nodes</Step>
+
+<Why>Node failure detection takes ~40–50 s, then the default `tolerationSeconds: 300` delays eviction, so replacement takes about 5–6 minutes in total. See [2.10](#210-self-healing-across-nodes).</Why>
+
+</Quiz>
+
+<Quiz id="q-scale-drift" type="mcq" answer="a">
+
+You ran `kubectl scale rs hello --replicas=6` during an incident. Your `hello-rs.yaml` still says `replicas: 3`. A teammate later runs `kubectl apply -f hello-rs.yaml` to change an env var. How many replicas are there afterwards?
+
+<Choice id="a">3</Choice>
+<Choice id="b">6</Choice>
+<Choice id="c">9</Choice>
+<Choice id="d">It fails with a conflict error</Choice>
+
+<Why>`apply` sets the live object to what the file says, including `replicas: 3`. That's file drift; copy imperative changes back into the file. See [2.8](#28-scaling-a-replicaset).</Why>
+
+</Quiz>
+
+<Quiz id="q-explain-version-selector" type="explain">
+
+A teammate's ReplicaSet uses this selector: `app.kubernetes.io/name: api` and `app.kubernetes.io/version: "2.3.0"`. Explain what problems this will cause and what you'd change.
+
+<Model>
+
+Selectors are immutable in `apps/v1`, and the version changes on every release. To ship 2.4.0 they'd have to change the template's version label, which would then no longer match the selector (rejected), so they'd have to delete and recreate the ReplicaSet, with downtime. Select only on stable identity labels (`name`, plus `instance` if there are several installs) and keep `version` as an informational label on the Pod template.
+
+</Model>
+
+</Quiz>
+
+---
+
+## 5. Checkpoint
+
+Answer these out loud, without notes. If you get stuck on one, re-read that section.
+
+<Checkpoint>
+<Ask id="cp-reconcile-loop" q="Describe the ReplicaSet controller's reconcile loop, and what DESIRED, CURRENT and READY mean." section="21-controllers-and-the-reconcile-loop">
+
+It watches the API server, and on any change counts the Pods matching its selector that aren't being deleted and that it owns. Fewer than `spec.replicas`: create from the template. More: delete. Then it updates the status. DESIRED is `spec.replicas`, CURRENT is how many Pods it has, READY is how many pass readiness. Pods that exist but aren't ready mean a problem inside them.
+
+</Ask>
+<Ask id="cp-rs-manifest" q="Write a ReplicaSet manifest out loud, field by field, and explain the selector/template relationship." section="24-the-replicaset-manifest">
+
+`apiVersion: apps/v1`, `kind: ReplicaSet`, `metadata.name`, then `spec` with `replicas`, `selector.matchLabels`, and `template` (a Pod's metadata with labels, and a Pod spec with containers). The template's labels must satisfy the selector, or the API server rejects it; otherwise the ReplicaSet would create Pods it never counts. The selector is immutable.
+
+</Ask>
+<Ask id="cp-labels-annotations" q="What's the difference between labels and annotations? Name the recommended labels and say which belong in a selector." section="25-labels-and-annotations">
+
+Labels identify and group objects and are what selectors match; annotations hold non-identifying metadata for tools and humans. Recommended: `app.kubernetes.io/name`, `instance`, `version`, `component`, `part-of`. Selectors should use stable ones like `name` and `instance`, never `version`, because selectors are immutable.
+
+</Ask>
+<Ask id="cp-selectors" q="Explain equality-based and set-based selectors, and show kubectl commands to filter and change labels." section="26-label-selectors">
+
+Equality: `=`, `!=`. Set-based: `In`, `NotIn`, `Exists`, `DoesNotExist`. `matchLabels` and `matchExpressions` are ANDed. Commands: `kubectl get pods -l 'app=x,track!=canary'`, `-l 'tier in (api,worker)'`, `-l '!quarantine'`, `--show-labels`, `-L key`, `kubectl label pod P k=v`, `--overwrite` to change, `k-` to remove.
+
+</Ask>
+<Ask id="cp-adoption" q="What happens when matching bare Pods exist before a ReplicaSet is created, and when one is created after? How is ownership recorded?" section="27-ownership-adoption-extras-and-garbage-collection">
+
+The selector is a query, so the ReplicaSet adopts matching Pods that have no controller owner. Existing ones count toward replicas, so it creates only the missing ones. A matching Pod created later is adopted too, making one too many, so one gets deleted. Ownership is `metadata.ownerReferences`; deleting the owner garbage-collects the Pods unless you use `--cascade=orphan`.
+
+</Ask>
+<Ask id="cp-quarantine" q="How would you take one misbehaving Pod out of service to debug it without losing capacity?" section="27-ownership-adoption-extras-and-garbage-collection">
+
+Relabel it with `--overwrite` so it no longer matches the selector. The ReplicaSet releases it and creates a replacement, and a Service selecting on that label stops routing to it. Then exec in and investigate, and delete it by hand afterwards, since nothing owns it.
+
+</Ask>
+<Ask id="cp-scaling-drift" q="What are the ways to scale a ReplicaSet, and what's the risk with kubectl scale and kubectl edit?" section="28-scaling-a-replicaset">
+
+Edit the file and `apply`, `kubectl scale --replicas=N`, or `kubectl edit`. Scale and edit change only the live object, so the file drifts, and the next `apply -f` silently reverts the change. Change the file, then apply; copy emergency changes back.
+
+</Ask>
+<Ask id="cp-rs-no-update" q="Why doesn't changing a ReplicaSet's image update the running Pods, and what does that mean for how you deploy?" section="29-what-a-replicaset-does-not-do">
+
+The controller compares counts, not Pod contents, and uses the template only for new Pods. Updating means replacing Pods one by one while checking health, plus a way back: a rolling update. Deployments do this by managing an old and a new ReplicaSet, so you use Deployments, not bare ReplicaSets.
+
+</Ask>
+<Ask id="cp-node-failure" q="Walk through what happens, with timings, when a worker node dies." section="210-self-healing-across-nodes">
+
+The kubelet's heartbeats stop. After ~40–50 s the node controller marks the node NotReady and taints it unreachable. Pods tolerate that taint for 300 s by default, so they stay bound for 5 minutes. Then they're evicted, the ReplicaSet creates replacements and the scheduler places them on healthy nodes, about 5–6 minutes in total. The old Pods show Terminating until the node returns. Spread replicas across nodes so the others carry the load meanwhile.
+
+</Ask>
+</Checkpoint>
+
+---
+
+## 6. Resources
+
+<Resource href="https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/" type="docs" time="20m" required>Kubernetes docs: ReplicaSet (including "When to use a ReplicaSet" and non-template Pod acquisitions)</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/" type="docs" time="20m" required>Kubernetes docs: Labels and Selectors</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/" type="docs" time="10m" required>Kubernetes docs: Recommended Labels</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/architecture/garbage-collection/" type="docs" time="15m">Kubernetes docs: Garbage Collection (owners, dependents and cascading deletion)</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions" type="docs" time="15m">Kubernetes docs: Taint-based evictions (the 300-second default)</Resource>

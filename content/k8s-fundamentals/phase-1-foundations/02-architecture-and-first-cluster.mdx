@@ -1,0 +1,811 @@
+# Module 02: Cluster Architecture and Your First Cluster
+
+**Time:** ~1 week (6 hrs)
+**Prerequisites:** Module 01
+**You'll need:** Docker, and **at least 3 GB free** on the disk Docker uses before you create any cluster. Your root disk is nearly full (about 1 GB free), so clear space first: `docker system df`, then `docker system prune -a` to remove unused images, and remove anything else you don't need. A kind node image alone is close to 1 GB.
+
+---
+
+## 1. Why it matters (the backend analogy)
+
+In Module 01 you were the orchestrator, and it was miserable. Kubernetes replaces you with a set of cooperating programs. Before you create a single Pod, you need a map of those programs, because every error you'll ever debug lives in one of them.
+
+The map is smaller than it looks, and it's built like a backend system you already know:
+
+| Backend system you know | Kubernetes equivalent |
+|---|---|
+| A REST API in front of a database; nothing else touches the DB | **kube-apiserver** in front of **etcd** |
+| The database | **etcd**: every object, its desired state and its reported status |
+| Background workers that poll for jobs and act on them | **Controllers** (in kube-controller-manager) and the **scheduler** |
+| A deploy agent on each server that starts processes | **kubelet** on each node |
+| The process runner (systemd, pm2) | The **container runtime** (containerd + runc) |
+| A load balancer config on each server | **kube-proxy** on each node |
+| An API client (curl, Postman) | **kubectl** |
+
+The key design choice: **every component talks only to the API server**, never to each other. The scheduler doesn't call the kubelet. The kubelet doesn't call the scheduler. They all read and write objects through the API, and react to changes they *watch* for. Once you see that, the cluster stops being a black box.
+
+<Card id="k8s-arch-analogy" q="Backend analogy: what are the API server, etcd, controllers and kubelet?">
+
+The API server is a REST API in front of a database (etcd) that nothing else touches. Controllers and the scheduler are background workers reacting to changes. The kubelet is a deploy agent on each server that starts containers through the runtime.
+
+</Card>
+
+<Card id="k8s-hub-and-spoke" q="How do Kubernetes components communicate with each other?">
+
+Only through the API server. Nobody calls anybody else directly. Each component reads and writes objects through the API and **watches** for changes it cares about.
+
+</Card>
+
+---
+
+## 2. Concepts
+
+### 2.1 Nodes and clusters
+
+<Callout type="note">
+
+**Watch:** 02 › 3 Kubernetes Architecture (local video)
+
+</Callout>
+
+A **node** is a machine (physical or, usually, a VM) that runs Kubernetes components. **Worker nodes** run your containers. If your app runs on one node and that node dies, your app dies, so you run several. A **cluster** is a set of nodes managed as one: spare capacity on any node can absorb load or replace what a dead node was running.
+
+Something has to manage the cluster: store what should run, decide where it runs, notice failures. That's the **control plane**. The video calls it the "master" and worker nodes "minions". Those names are gone from current Kubernetes; say **control plane** and **worker node**.
+
+In small clusters (kind, minikube, kubeadm labs) the control plane runs on a node of its own, which may also run workloads. In managed clusters (GKE, EKS, AKS) the cloud provider runs the control plane for you and you never see its machines.
+
+<Card id="node-cluster-control-plane" q="What are a node, a cluster and the control plane?">
+
+A node is a machine (usually a VM) running Kubernetes components; worker nodes run your containers. A cluster is a set of nodes managed as one, so a dead node's work moves elsewhere. The control plane stores desired state, schedules and reacts to failures. (Old names: master and minion.)
+
+</Card>
+
+### 2.2 The control plane
+
+<Callout type="note">
+
+**Watch:** 02 › 3 Kubernetes Architecture, the component walk-through
+
+</Callout>
+
+| Component | Job |
+|---|---|
+| **kube-apiserver** | The front door. Every `kubectl` command, every component, every controller talks to it over HTTPS. It authenticates and authorizes each request, runs admission checks, validates the object, and stores it. It's the **only** component that reads and writes etcd |
+| **etcd** | A distributed, consistent key-value store holding the whole cluster state: every object's spec (desired state) and status (actual state). Lose etcd without a backup and you've lost the cluster's memory |
+| **kube-scheduler** | Watches for Pods with no node assigned. For each, it filters out nodes that can't run it (not enough CPU/memory, taints, affinity rules) and scores the rest, then writes the chosen node name onto the Pod. It doesn't start anything |
+| **kube-controller-manager** | One process running dozens of **controllers**: the ReplicaSet controller, the Deployment controller, the Node controller (notices nodes that stop reporting), the Job controller, and more. Each one is a reconciliation loop (section 2.4) |
+| **cloud-controller-manager** | Only on cloud clusters. The controllers that talk to the cloud's API: create a cloud load balancer for a Service, attach disks, learn when a VM was deleted. Not present in kind |
+
+Production control planes run several replicas of all of these (typically 3 etcd members for quorum) so the control plane itself has no single point of failure.
+
+<Card id="apiserver-only-etcd" q="What does kube-apiserver do, and what is special about its relationship with etcd?">
+
+It's the single front door: authenticates, authorizes, runs admission, validates and stores every request. It is the **only** component that reads and writes etcd; everyone else goes through it.
+
+</Card>
+
+<Card id="scheduler-job" q="What exactly does kube-scheduler do, and what does it NOT do?">
+
+It watches for Pods with no node, filters out nodes that can't run them, scores the rest, and writes the chosen node name onto the Pod (a binding). It does not start containers; the kubelet on that node does.
+
+</Card>
+
+<Card id="controller-manager-job" q="What is kube-controller-manager, and what is cloud-controller-manager?">
+
+kube-controller-manager is one process running many controllers (ReplicaSet, Deployment, Node, Job…), each a reconciliation loop. cloud-controller-manager holds the controllers that call a cloud provider's API (load balancers, disks, node lifecycle); it only exists on cloud clusters.
+
+</Card>
+
+### 2.3 Node components
+
+<Callout type="note">
+
+**Watch:** 02 › 3 Kubernetes Architecture, master vs worker components
+
+</Callout>
+
+Every node, including control-plane nodes, runs:
+
+| Component | Job |
+|---|---|
+| **kubelet** | The node agent. Watches the API server for Pods assigned to *its* node, asks the container runtime to start their containers, runs their health checks, and reports their status back. It also registers the node and reports node health. Runs as a normal system service (systemd), not in a container |
+| **kube-proxy** | Programs the node's networking (iptables, IPVS or nftables rules) so traffic to a Service's virtual IP reaches one of the Service's Pods (Module 07). Usually runs as a Pod on every node (a DaemonSet). Some network plugins, such as Cilium, replace it |
+| **Container runtime** | Actually runs containers: pulls images, sets up namespaces and cgroups. Today that's almost always **containerd** (or CRI-O), driven by the kubelet through the CRI (section 2.6) |
+
+The video's architecture slide leaves out kube-proxy. You'll need it the moment you learn Services.
+
+<Card id="kubelet-job" q="What does the kubelet do?">
+
+The node agent: watches for Pods assigned to its node, has the container runtime start their containers, runs their probes, and reports Pod and node status to the API server. It runs as a system service, not as a container.
+
+</Card>
+
+<Card id="kube-proxy-job" q="What does kube-proxy do, and where does it run?">
+
+It programs each node's networking rules (iptables/IPVS/nftables) so traffic to a Service's virtual IP reaches one of its Pods. It runs on every node, usually as a DaemonSet Pod; some CNI plugins (Cilium) replace it.
+
+</Card>
+
+### 2.4 The reconciliation loop: watch, compare, act
+
+<Callout type="note">
+
+**Watch:** 02 › 3 Kubernetes Architecture, "controllers are the brain behind orchestration"
+
+</Callout>
+
+Every controller, the scheduler and the kubelet run the same loop:
+
+```text
+loop forever:
+  desired = what the objects I care about say (spec)
+  actual  = what's really true (status, running containers, other objects)
+  if actual != desired:
+      take ONE step to move actual toward desired
+  wait for the next change (a watch event), or a periodic resync
+```
+
+Three properties make this robust, and they explain behavior you'll see constantly:
+
+- **Level-triggered, not event-triggered.** A controller doesn't care *what happened* ("a Pod was deleted"). It looks at the current state ("2 Pods exist, 3 are wanted") and fixes it. Missed an event while restarting? Doesn't matter: the next pass sees the same gap.
+- **Watches, not polling.** Components open a long-lived *watch* on the API server and get pushed changes, so reactions take milliseconds without hammering etcd.
+- **Small and composable.** Each controller does one job and leaves the rest to others. The Deployment controller creates ReplicaSets; the ReplicaSet controller creates Pods; the scheduler places Pods; the kubelet runs them. None of them knows the whole story.
+
+That's why deleting a Pod managed by a ReplicaSet is pointless: within seconds the ReplicaSet controller sees 2 where 3 are wanted and creates another.
+
+<Card id="reconcile-loop" q="Describe the reconciliation loop every controller runs.">
+
+Forever: read desired state (spec), observe actual state, and if they differ, take a step toward desired. Wake on watch events from the API server, plus a periodic resync.
+
+</Card>
+
+<Card id="level-triggered" q="Why does it matter that controllers are level-triggered rather than event-triggered?">
+
+They act on the current gap between desired and actual, not on individual events. A missed event (controller restart, network blip) doesn't break anything; the next pass sees the same gap and fixes it.
+
+</Card>
+
+### 2.5 What happens when you apply a Pod
+
+<Callout type="note">
+
+**Watch:** no single lecture covers this trace; it ties 02 › 3 together
+
+</Callout>
+
+You run `kubectl apply -f pod.yaml`. Here's every hop:
+
+1. **kubectl** reads your kubeconfig (section 2.8), turns the YAML into JSON and sends an HTTPS request to the API server.
+2. **kube-apiserver** authenticates you (client certificate or token), authorizes the action (RBAC: may this user create Pods in this namespace?), runs **admission** controllers (which can reject or modify the object, e.g. add defaults), validates the schema, and writes the Pod to **etcd**. The Pod now exists with `spec.nodeName` empty and phase `Pending`. kubectl prints `pod/web created` and exits. **Nothing is running yet.**
+3. **kube-scheduler**, watching for Pods without a node, sees it, picks a node, and writes a *binding*: `spec.nodeName: kind-worker`.
+4. The **kubelet** on `kind-worker`, watching for Pods bound to itself, sees it.
+5. The kubelet calls the runtime over the **CRI** (a gRPC API): `RunPodSandbox` creates the Pod's sandbox (a tiny `pause` container that holds the Pod's network namespace; the CNI plugin gives it an IP). Then `PullImage`, `CreateContainer`, `StartContainer` for each container.
+6. **containerd** pulls the image layers, prepares the filesystem, and starts a **containerd-shim**, which calls **runc**. runc asks the kernel for the namespaces and cgroups (Module 01) and execs your process, then exits. The shim stays as the container's parent.
+7. The **kubelet** watches the container, runs its probes, and writes status back to the API server: phase `Running`, the Pod IP, container states.
+8. You run `kubectl get pod web` and see `Running`. kubectl read that status from the API server, which read it from etcd.
+
+Two lessons worth remembering. First, `created` from kubectl only means "stored", which is why you always check the status afterwards. Second, each step is a separate component reacting to a change in the API, so when a Pod is stuck, the step where it's stuck tells you which component to look at: `Pending` with no node means the scheduler; `ContainerCreating` or `ImagePullBackOff` means the kubelet and runtime on that node.
+
+```text
+kubectl ──HTTPS──► kube-apiserver ◄──► etcd
+                     ▲        ▲
+            watch &  │        │ watch & report status
+            bind     │        │
+             kube-scheduler   kubelet (on the node) ──CRI──► containerd ──► shim ──► runc ──► kernel
+```
+
+<Card id="apply-pod-trace" q="Trace kubectl apply of a Pod from the command to a running process.">
+
+kubectl → API server (authn, authz, admission, validation) → stored in etcd, Pending, no node. Scheduler sees it, binds it to a node. That node's kubelet sees it, calls the runtime over CRI: sandbox (pause container + CNI IP), pull, create, start. containerd → shim → runc creates namespaces/cgroups and execs the process. kubelet reports status back to the API server.
+
+</Card>
+
+<Card id="created-means-stored" q="What does 'pod/web created' from kubectl actually guarantee?">
+
+Only that the API server validated the object and stored it in etcd. Scheduling, pulling and starting happen afterwards, asynchronously, so always check the status.
+
+</Card>
+
+<Card id="stuck-step-tells-component" q="A Pod is stuck. How does its status tell you which component to look at?">
+
+`Pending` with no node assigned: the scheduler (no node fits, or the scheduler is down). `ContainerCreating`, `ImagePullBackOff`, `CrashLoopBackOff`: the kubelet and runtime on its node, or the app itself.
+
+</Card>
+
+### 2.6 Container runtimes: CRI, containerd and the Docker story
+
+<Callout type="note">
+
+**Watch:** 02 › 4 Docker-vs-ContainerD and 02 › 5 A note on Docker deprecation (local videos)
+
+</Callout>
+
+Early Kubernetes was hard-wired to Docker. As other runtimes appeared, Kubernetes defined two contracts:
+
+- **CRI (Container Runtime Interface):** the gRPC API the kubelet uses to talk to *any* runtime: run a Pod sandbox, pull an image, create, start, stop, list. Any runtime that implements it can sit under Kubernetes.
+- **OCI (Open Container Initiative):** the standards for image format (image spec) and for how a low-level runtime starts a container (runtime spec). runc is the reference OCI runtime.
+
+Docker Engine predates the CRI and never implemented it, so Kubernetes carried an adapter called **dockershim** inside the kubelet. Meanwhile Docker itself had been split up: its core runtime, **containerd**, became a separate CNCF project that *does* implement the CRI. Maintaining dockershim made no sense when the kubelet could talk to containerd directly, so **dockershim was removed in Kubernetes 1.24** (2022).
+
+What that did and didn't mean:
+
+- Kubernetes nodes no longer use Docker Engine. They use containerd (or CRI-O).
+- **Your Docker-built images still work everywhere**, because they're OCI images.
+- Docker is still the most common tool for **building** images and for local development. It just isn't the node runtime anymore. (kind is a neat example: each kind "node" is a Docker container, and *inside* it, the kubelet uses containerd.)
+
+The stack on a node today: **kubelet → (CRI) → containerd → containerd-shim → runc → kernel**.
+
+#### Three CLIs you'll meet on a node
+
+| Tool | From | Use it for |
+|---|---|---|
+| `ctr` | containerd project | Low-level containerd debugging. Unfriendly; you'll rarely need it |
+| `nerdctl` | containerd project | A Docker-compatible CLI for containerd (`nerdctl run -p 8080:80 nginx`). General purpose, for machines without Docker |
+| `crictl` | Kubernetes project | **Debugging nodes.** Talks CRI to whatever runtime the kubelet uses, and understands Pods: `crictl pods`, `crictl ps`, `crictl logs`, `crictl exec`, `crictl images` |
+
+Use `crictl` to look, not to create: the kubelet deletes containers it didn't create. And normally you don't even need it, because `kubectl logs` and `kubectl exec` cover most cases. You reach for crictl when the problem is the node itself (the API server is down, or a Pod never registered).
+
+<Card id="cri-vs-oci" q="What are the CRI and the OCI?">
+
+CRI: the gRPC API the kubelet uses to drive any container runtime (sandbox, pull, create, start…). OCI: the standards for the image format and for how a low-level runtime (runc) starts a container.
+
+</Card>
+
+<Card id="dockershim-removal" q="What was dockershim, why was it removed in 1.24, and do Docker-built images still work?">
+
+An adapter inside the kubelet because Docker Engine never implemented the CRI. Once containerd (Docker's own core) implemented the CRI directly, the shim was pointless and was removed in 1.24. Docker-built images still work because they're OCI images; Docker is still fine for building them.
+
+</Card>
+
+<Card id="ctr-nerdctl-crictl" q="ctr vs nerdctl vs crictl: who makes each and when do you use it?">
+
+`ctr` (containerd): low-level containerd debugging, rarely needed. `nerdctl` (containerd): Docker-like general-purpose CLI for containerd. `crictl` (Kubernetes): debugging nodes through the CRI, Pod-aware; look with it, don't create, because the kubelet deletes containers it didn't create.
+
+</Card>
+
+### 2.7 Getting a cluster: why kind
+
+<Callout type="note">
+
+**Watch:** 03 › 1 Kubernetes Setup - Introduction and Minikube, and 03 › 2 Demo - Minikube-Setup (local videos). Watch for the ideas; you'll use kind instead of minikube.
+
+</Callout>
+
+| Option | What it is | Good for |
+|---|---|---|
+| **kind** | Each node is a Docker container running kubelet + containerd. Multi-node on one laptop | **This course.** Fast (~30 s), cheap, disposable, multi-node, and the clusters Kubernetes itself uses for its CI |
+| minikube | A single-node (or multi-node) cluster in a VM or container, with many add-ons | A friendlier all-in-one; the video uses it with VirtualBox |
+| Docker Desktop | A one-click single-node cluster | macOS/Windows users who already have it |
+| k3d | k3s (a lightweight Kubernetes distribution) in Docker | Very light clusters; k3s also runs on Raspberry Pis and edge devices |
+| kubeadm | The official tool to build a real cluster on machines/VMs you provide | Learning what a real cluster contains (Module 13); the CKA exam |
+| Managed (GKE, EKS, AKS) | The cloud runs the control plane; you get nodes | Production (Module 14). Costs money per hour |
+
+Why kind over the video's minikube + VirtualBox: you already have Docker, so there's no hypervisor to install and no BIOS virtualization to check; clusters start in seconds; you can have several at once; and a 3-node cluster costs about as much as three containers. The trade-off: kind nodes aren't real machines, so things like LoadBalancer Services need extra tools (Module 07).
+
+#### Install kubectl and kind (Linux, amd64)
+
+```bash
+# kubectl: the official binary, latest stable
+curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -m 0755 kubectl /usr/local/bin/kubectl && rm kubectl
+kubectl version --client
+
+# kind: pick the newest release from https://github.com/kubernetes-sigs/kind/releases
+KIND_VERSION=v0.33.0   # latest as of Oct 2026; check the kind releases page
+curl -Lo kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+sudo install -m 0755 kind /usr/local/bin/kind && rm kind
+kind version
+
+# first cluster (frees nothing: check `df -h /var/lib/docker` first!)
+kind create cluster            # cluster "kind", context "kind-kind"
+kubectl get nodes
+```
+
+kubectl should be within one minor version of the cluster's API server. Installing the latest of both keeps that true.
+
+<Card id="why-kind" q="Why does this course use kind instead of minikube on VirtualBox?">
+
+kind runs each node as a Docker container you already have: no hypervisor, starts in ~30 s, multi-node on one laptop, several clusters at once, cheap to throw away. Trade-off: nodes aren't real machines, so e.g. LoadBalancer Services need extra tooling.
+
+</Card>
+
+<Card id="cluster-options" q="Name the main ways to get a cluster and what each is for.">
+
+kind / k3d / minikube / Docker Desktop: local learning and dev. kubeadm: build a real cluster on your own machines (learning, CKA). Managed GKE/EKS/AKS: production, the cloud runs the control plane.
+
+</Card>
+
+### 2.8 kubectl and kubeconfig
+
+<Callout type="note">
+
+**Watch:** 03 › 2 Demo - Minikube-Setup, the part where minikube configures kubectl
+
+</Callout>
+
+kubectl is an HTTP client. It needs three things to talk to a cluster: **where** the API server is, **who** you are, and **which namespace** to default to. It reads them from a **kubeconfig** file, `~/.kube/config` by default (or whatever the `KUBECONFIG` env var points to). `kind create cluster` writes an entry there for you, just as minikube did in the video.
+
+A kubeconfig has three lists and a pointer:
+
+```yaml
+apiVersion: v1
+kind: Config
+clusters:                      # WHERE: API server URL + the CA cert to trust it
+  - name: kind-kind
+    cluster:
+      server: https://127.0.0.1:41245
+      certificate-authority-data: LS0t...
+users:                         # WHO: credentials (here a client certificate)
+  - name: kind-kind
+    user:
+      client-certificate-data: LS0t...
+      client-key-data: LS0t...
+contexts:                      # a named pairing of cluster + user (+ default namespace)
+  - name: kind-kind
+    context:
+      cluster: kind-kind
+      user: kind-kind
+current-context: kind-kind     # the one kubectl uses right now
+```
+
+```bash
+kubectl config get-contexts          # list contexts; * marks the current one
+kubectl config current-context
+kubectl config use-context kind-dev  # switch clusters
+kubectl --context kind-dev get nodes # one command against another cluster
+```
+
+Treat this file like an SSH private key: it holds admin credentials for your cluster. And always know which context you're in before running anything destructive. "Deleted it on prod instead of dev" is a real and common incident.
+
+<Card id="kubeconfig-parts" q="What does a kubeconfig contain?">
+
+`clusters` (API server URL + CA to trust), `users` (credentials), `contexts` (a named cluster + user + optional default namespace), and `current-context` (which one kubectl uses now). Default path `~/.kube/config`, or `$KUBECONFIG`.
+
+</Card>
+
+<Card id="context-commands" q="How do you list, check and switch kubectl contexts?">
+
+`kubectl config get-contexts` (the `*` is current), `kubectl config current-context`, `kubectl config use-context <name>`, or `--context <name>` for a single command.
+
+</Card>
+
+### 2.9 Your first commands
+
+<Callout type="note">
+
+**Watch:** the end of 02 › 3 Kubernetes Architecture (kubectl basics) and of 03 › 2 Demo - Minikube-Setup
+
+</Callout>
+
+| Command | What it tells you |
+|---|---|
+| `kubectl version` | Client and server versions (are they within one minor version?) |
+| `kubectl cluster-info` | The API server URL and CoreDNS address: is kubectl reaching the cluster at all? |
+| `kubectl get nodes -o wide` | Every node, its status (`Ready`?), role, version, internal IP, OS and **container runtime** (you'll see `containerd://…`) |
+| `kubectl get pods -A` | Pods in **all** namespaces. On a fresh cluster, these are the system components in `kube-system` |
+| `kubectl api-resources` | Every object type the cluster knows, with short names (`po`, `deploy`, `svc`) and API group |
+| `kubectl explain pod.spec.containers` | Built-in docs for any field, matching your cluster's version |
+
+The video uses `kubectl run` to "deploy an application". In current Kubernetes `kubectl run` creates a single Pod, and this course does almost everything with `kubectl apply -f <file>` instead (Module 03).
+
+<Card id="first-commands" q="Which commands check that kubectl reaches the cluster and show what's in it?">
+
+`kubectl version` and `kubectl cluster-info` (connectivity, versions), `kubectl get nodes -o wide` (nodes, status, runtime), `kubectl get pods -A` (all namespaces), `kubectl api-resources` (object types and short names), `kubectl explain <field>` (built-in docs).
+
+</Card>
+
+---
+
+## 3. Drills
+
+Do these in `k8s-journey/02/`. Free disk space first (see the top of this module).
+
+<Drill id="d1-first-kind-cluster" title="D1. Your first cluster, explored (20 min)">
+
+Create a cluster and answer each question with a command:
+
+```bash
+kind create cluster
+```
+
+1. How many nodes are there, what's their role, and which container runtime and version do they use?
+2. What's the API server's URL?
+3. Which namespaces exist?
+4. List every Pod in every namespace. Which ones do you recognize from section 2.2–2.3?
+5. Run `docker ps`. What do you see, and how does it relate to question 1?
+
+<Answer>
+
+1. `kubectl get nodes -o wide`: one node, `kind-control-plane`, role `control-plane`, status `Ready`, CONTAINER-RUNTIME `containerd://1.7.x` (or 2.x).
+2. `kubectl cluster-info`: `Kubernetes control plane is running at https://127.0.0.1:<port>`. kind maps a random host port to the API server inside the node container.
+3. `kubectl get namespaces`: `default`, `kube-system`, `kube-public`, `kube-node-lease`, `local-path-storage` (kind's storage provisioner).
+4. `kubectl get pods -A`: `etcd-kind-control-plane`, `kube-apiserver-kind-control-plane`, `kube-controller-manager-kind-control-plane`, `kube-scheduler-kind-control-plane`, `kube-proxy-xxxxx`, two `coredns-…` Pods (cluster DNS), `kindnet-xxxxx` (kind's network plugin), and `local-path-provisioner-…`. There's no cloud-controller-manager (no cloud) and no kubelet Pod (it's a system service on the node).
+5. One container, `kind-control-plane`, from the `kindest/node` image. That container **is** the node: it runs systemd, the kubelet and containerd, and the control-plane Pods run inside it.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-three-node-cluster" title="D2. A three-node cluster from a config file (20 min)">
+
+Delete the default cluster (`kind delete cluster`) and create a 3-node one from a file:
+
+```yaml
+# kind-3node.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lab
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+```
+
+```bash
+kind create cluster --config kind-3node.yaml
+```
+
+1. What's the new context's name?
+2. `kubectl get pods -A -o wide`: which Pods run on **every** node, and which only on the control-plane node?
+3. How many `docker ps` containers are there now?
+
+<Answer>
+
+1. `kind-lab` (kind prefixes the cluster name with `kind-`).
+2. On every node: `kube-proxy-…` and `kindnet-…` (both DaemonSets, one Pod per node). Only on `lab-control-plane`: etcd, kube-apiserver, kube-controller-manager, kube-scheduler. CoreDNS and local-path-provisioner usually land on the control-plane node too in kind, but they could run anywhere.
+3. Three: `lab-control-plane`, `lab-worker`, `lab-worker2`.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-static-pods" title="D3. Control-plane components are static Pods (20 min)">
+
+The control-plane components show up as Pods, yet the scheduler can't have scheduled itself. Find out how they start:
+
+```bash
+docker exec lab-control-plane ls /etc/kubernetes/manifests
+kubectl -n kube-system get pod kube-scheduler-lab-control-plane -o yaml | grep -A3 ownerReferences
+docker exec lab-control-plane systemctl status kubelet --no-pager | head -5
+```
+
+1. What's in that directory?
+2. Who "owns" the kube-scheduler Pod?
+3. How is the kubelet itself running?
+
+<Answer>
+
+1. Four manifests: `etcd.yaml`, `kube-apiserver.yaml`, `kube-controller-manager.yaml`, `kube-scheduler.yaml`.
+2. Its owner is the `Node` `lab-control-plane`. These are **static Pods**: the kubelet reads manifests from `/etc/kubernetes/manifests` and runs them directly, with no API server or scheduler involved. It then publishes a read-only "mirror Pod" to the API server so you can see them with kubectl. That's how the control plane bootstraps: the kubelet starts the API server before there's any API server to ask.
+3. As a systemd service (`active (running)`), not a container. That's also why it never shows up in `kubectl get pods`.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d4-crictl" title="D4. Look at a node from the inside with crictl (20 min)">
+
+```bash
+docker exec -it lab-worker bash
+crictl pods
+crictl ps
+crictl images
+crictl logs <a container id from crictl ps>
+exit
+```
+
+1. What's the difference between `crictl pods` and `crictl ps`?
+2. Why is there a `pause` image on the node?
+3. Why is `crictl` the right tool here and not `docker`?
+
+<Answer>
+
+1. `crictl pods` lists Pod **sandboxes** (one per Pod: kube-proxy, kindnet…). `crictl ps` lists the **containers** running inside those sandboxes, with the Pod each belongs to.
+2. Every Pod gets a sandbox: a tiny `pause` container that holds the Pod's network namespace (and IP). The Pod's real containers join that namespace, so they can restart without the Pod losing its IP (more in Module 03).
+3. The node's runtime is containerd, driven by the kubelet through the CRI. There's no Docker daemon inside the node. `crictl` speaks CRI and understands Pods, so it shows exactly what the kubelet sees. (Docker on your *host* only sees the three node containers.)
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-break-the-scheduler" title="D5. Break the scheduler, then fix it (25 min)">
+
+Predict each result before you run it.
+
+```bash
+# 1. stop the scheduler by removing its static Pod manifest
+docker exec lab-control-plane mv /etc/kubernetes/manifests/kube-scheduler.yaml /tmp/
+kubectl -n kube-system get pods | grep scheduler     # wait until it's gone
+
+# 2. create a Pod
+kubectl run web --image=nginx
+kubectl get pod web -o wide
+kubectl describe pod web | tail -5
+
+# 3. bring the scheduler back
+docker exec lab-control-plane mv /tmp/kube-scheduler.yaml /etc/kubernetes/manifests/
+kubectl get pod web -o wide -w
+```
+
+Explain what you saw at steps 2 and 3, component by component.
+
+<Answer>
+
+**Step 1:** the kubelet notices the manifest is gone and stops the scheduler's static Pod; the mirror Pod disappears from `kubectl get pods`.
+
+**Step 2:** `kubectl run` succeeds (`pod/web created`), because the API server and etcd are fine. But the Pod stays `Pending`, NODE shows `<none>`, and `describe` shows `Node: <none>` and **no events at all**. No scheduler means no one sets `spec.nodeName`, and no kubelet will touch a Pod that isn't bound to it.
+
+**Step 3:** the kubelet sees the manifest again and restarts the scheduler. Within seconds the scheduler finds the unbound Pod, binds it to `lab-worker` or `lab-worker2`, and the Pod goes `ContainerCreating` → `Running`. Events now show `Scheduled` by `default-scheduler`, then `Pulling`, `Pulled`, `Created`, `Started` from the kubelet.
+
+Lesson: **`Pending` with no node and no events points at scheduling**, and the cluster heals by itself once the component is back, because the Pod's desired state was safely stored all along. Clean up: `kubectl delete pod web`.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-two-contexts" title="D6. Two clusters, one kubectl (15 min)">
+
+Keep `lab` running and create a second cluster: `kind create cluster --name dev`.
+
+1. Which context is current now?
+2. Create a Pod named `where-am-i` (`kubectl run where-am-i --image=nginx`). Which cluster did it land in? Prove it with `--context`.
+3. Switch to `kind-lab` and confirm the Pod isn't there.
+4. Delete the `dev` cluster. What happens to its kubeconfig entry and to your current context?
+
+<Answer>
+
+1. `kind-dev`: kind switches the current context to the cluster it just created. (`kubectl config get-contexts` shows the `*` on it.)
+2. In `dev`. `kubectl --context kind-dev get pods` shows it; `kubectl --context kind-lab get pods` doesn't.
+3. `kubectl config use-context kind-lab`, then `kubectl get pods`: `No resources found in default namespace.`
+4. `kind delete cluster --name dev` removes the `kind-dev` cluster, user and context from `~/.kube/config`. If it was current, the current context is left unset, so run `kubectl config use-context kind-lab` again. Moral: check `kubectl config current-context` before anything destructive.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d7-events-trace" title="D7. Watch the creation trace in events (15 min)">
+
+On `kind-lab`:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: traced
+spec:
+  containers:
+    - name: web
+      image: nginx:1.27
+EOF
+kubectl get events --sort-by=.metadata.creationTimestamp --field-selector involvedObject.name=traced
+```
+
+Map each event to the step in section 2.5 and to the component that reported it.
+
+<Answer>
+
+You'll see, in order:
+
+| Event | Reported by | Step in 2.5 |
+|---|---|---|
+| `Scheduled`: Successfully assigned default/traced to lab-worker2 | `default-scheduler` | 3: binding |
+| `Pulling`: Pulling image "nginx:1.27" | `kubelet` | 5–6: PullImage via CRI |
+| `Pulled`: Successfully pulled image … in 4.2s | `kubelet` | 6 |
+| `Created`: Created container web | `kubelet` | 5–6: CreateContainer |
+| `Started`: Started container web | `kubelet` | 6–7: StartContainer, status reported |
+
+There's no event for steps 1–2 (the API server storing the object) because creation itself isn't an event. Apply it again unchanged and nothing new happens: `pod/traced unchanged`. Clean up: `kubectl delete pod traced`.
+
+</Answer>
+
+</Drill>
+
+---
+
+## 4. Build: cluster-in-a-file (1–2 hrs)
+
+<Build id="build-cluster-in-a-file" title="Cluster-in-a-file">
+
+Make your lab cluster reproducible, and document what runs where. You'll use this cluster for the rest of Phase 1.
+
+In `k8s-journey/cluster/`:
+
+- `kind.yaml`: a cluster named `lab` with 1 control-plane and 2 worker nodes.
+- `up.sh`: creates the cluster from `kind.yaml` if it doesn't exist (`kind get clusters`), switches kubectl to its context, and waits until every node is `Ready` (`kubectl wait --for=condition=Ready nodes --all --timeout=120s`).
+- `down.sh`: deletes it.
+- `README.md` with:
+  - a table built from `kubectl get pods -A -o wide`: component, namespace, which node(s), and how it's started (static Pod, DaemonSet, Deployment, or systemd service for the kubelet and containerd)
+  - a short text diagram of the control plane and nodes, with arrows showing who talks to the API server
+  - the trace from section 2.5 in your own words, in 8 lines or fewer
+
+Acceptance:
+- [ ] `./down.sh && ./up.sh` gives a 3-node cluster with all nodes `Ready`, with no manual steps
+- [ ] Running `./up.sh` twice in a row doesn't fail or create a second cluster
+- [ ] The README table covers etcd, kube-apiserver, kube-scheduler, kube-controller-manager, kube-proxy, CoreDNS, the CNI plugin (kindnet), kubelet and containerd
+- [ ] The README says why there's no cloud-controller-manager
+- [ ] Everything committed to the `k8s-journey` repo
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-only-etcd" type="mcq" answer="a">
+
+Which component reads and writes etcd directly?
+
+<Choice id="a">Only kube-apiserver</Choice>
+<Choice id="b">kube-apiserver and kube-controller-manager</Choice>
+<Choice id="c">Every control-plane component</Choice>
+<Choice id="d">The kubelet on each node, to store Pod status</Choice>
+
+<Why>Everyone else, including controllers, the scheduler and kubelets, goes through the API server. See [2.2](#22-the-control-plane).</Why>
+
+</Quiz>
+
+<Quiz id="q-pending-no-node" type="mcq" answer="c">
+
+A new Pod has been `Pending` for 5 minutes. `kubectl describe` shows `Node: <none>` and no events. Which component is the most likely culprit?
+
+<Choice id="a">The kubelet on the worker nodes</Choice>
+<Choice id="b">containerd</Choice>
+<Choice id="c">kube-scheduler</Choice>
+<Choice id="d">etcd</Choice>
+
+<Why>No node assigned and no `Scheduled` event means nothing bound the Pod. etcd is fine (the Pod was stored), and no kubelet acts on an unbound Pod. See [2.5](#25-what-happens-when-you-apply-a-pod).</Why>
+
+</Quiz>
+
+<Quiz id="q-node-components" type="multi" answer="a,b,d">
+
+Which components run on **every** node, including workers?
+
+<Choice id="a">kubelet</Choice>
+<Choice id="b">kube-proxy (unless the network plugin replaces it)</Choice>
+<Choice id="c">kube-scheduler</Choice>
+<Choice id="d">A container runtime such as containerd</Choice>
+<Choice id="e">etcd</Choice>
+
+<Why>The scheduler and etcd are control-plane components. Every node needs a kubelet, a runtime and (usually) kube-proxy. See [2.3](#23-node-components).</Why>
+
+</Quiz>
+
+<Quiz id="q-apply-order" type="order" answer="kubectl,apiserver,etcd,scheduler,kubelet,runtime">
+
+Put the hops of `kubectl apply -f pod.yaml` in order.
+
+<Step id="kubectl">kubectl sends the object to the API server over HTTPS</Step>
+<Step id="apiserver">The API server authenticates, authorizes, admits and validates it</Step>
+<Step id="etcd">The Pod is stored in etcd, with no node</Step>
+<Step id="scheduler">The scheduler binds the Pod to a node</Step>
+<Step id="kubelet">That node's kubelet sees the Pod assigned to it</Step>
+<Step id="runtime">containerd and runc start the container</Step>
+
+<Why>Each step is a different component reacting to a change it watches for. See [2.5](#25-what-happens-when-you-apply-a-pod).</Why>
+
+</Quiz>
+
+<Quiz id="q-dockershim" type="mcq" answer="b">
+
+Kubernetes 1.24 removed dockershim. What happened to images built with `docker build`?
+
+<Choice id="a">They must be rebuilt with nerdctl</Choice>
+<Choice id="b">Nothing; they're OCI images and run on containerd unchanged</Choice>
+<Choice id="c">They only run on nodes with cri-dockerd installed</Choice>
+<Choice id="d">They need to be converted with `ctr images convert`</Choice>
+
+<Why>Docker builds OCI-standard images. Only Docker Engine as the *node runtime* went away. See [2.6](#26-container-runtimes-cri-containerd-and-the-docker-story).</Why>
+
+</Quiz>
+
+<Quiz id="q-crictl" type="mcq" answer="d">
+
+The API server on a node is down, so `kubectl` doesn't work. You want to see which containers are running on that node and read their logs. Which tool?
+
+<Choice id="a">`docker ps` on the node</Choice>
+<Choice id="b">`ctr` with the default namespace</Choice>
+<Choice id="c">`nerdctl ps`</Choice>
+<Choice id="d">`crictl ps` and `crictl logs`</Choice>
+
+<Why>crictl talks CRI to the runtime the kubelet uses and understands Pods; it's the node-debugging tool. Docker isn't on the node, and `ctr`/`nerdctl` default to a different containerd namespace than the one Kubernetes uses (`k8s.io`). See [2.6](#26-container-runtimes-cri-containerd-and-the-docker-story).</Why>
+
+</Quiz>
+
+<Quiz id="q-context-cmd" type="blank" answer="use-context">
+
+Complete the command that makes `kind-lab` the cluster kubectl talks to from now on.
+
+```bash
+kubectl config ___ kind-lab
+```
+
+<Why>`use-context` changes `current-context` in your kubeconfig. See [2.8](#28-kubectl-and-kubeconfig).</Why>
+
+</Quiz>
+
+<Quiz id="q-level-triggered" type="mcq" answer="a">
+
+The ReplicaSet controller restarts and misses the event "Pod web-abc was deleted". What happens?
+
+<Choice id="a">On its next pass it sees 2 Pods where 3 are wanted and creates one</Choice>
+<Choice id="b">The replica is lost until someone re-applies the ReplicaSet</Choice>
+<Choice id="c">The API server replays the missed event later</Choice>
+<Choice id="d">The kubelet recreates the Pod on the same node</Choice>
+
+<Why>Controllers are level-triggered: they compare current actual state with desired state, so a missed event doesn't matter. See [2.4](#24-the-reconciliation-loop-watch-compare-act).</Why>
+
+</Quiz>
+
+<Quiz id="q-explain-static-pods" type="explain">
+
+The scheduler places Pods, and the API server stores them. So how do the scheduler and API server Pods themselves get started on a fresh control-plane node?
+
+<Model>
+
+They're static Pods. The kubelet, which runs as a systemd service, watches a directory (`/etc/kubernetes/manifests`) and runs any Pod manifest it finds there directly through the container runtime, without the API server or scheduler. Once the API server is up, the kubelet publishes read-only mirror Pods so they appear in `kubectl get pods`. That's how the control plane bootstraps itself.
+
+</Model>
+
+</Quiz>
+
+---
+
+## 5. Checkpoint
+
+Answer these out loud, without notes. If you get stuck on one, re-read that section.
+
+<Checkpoint>
+<Ask id="cp-control-plane-components" q="Name every control-plane component and what it does." section="22-the-control-plane">
+
+kube-apiserver: the front door; authenticates, authorizes, admits, validates and stores every request, and is the only component that talks to etcd. etcd: the consistent key-value store holding all cluster state. kube-scheduler: assigns unscheduled Pods to nodes by filtering and scoring. kube-controller-manager: runs the controllers (ReplicaSet, Deployment, Node…) that reconcile desired and actual state. cloud-controller-manager: on cloud clusters only, the controllers that call the cloud API (load balancers, disks, node lifecycle).
+
+</Ask>
+<Ask id="cp-node-components" q="What runs on every node, and what does each piece do?" section="23-node-components">
+
+The kubelet: a system service that watches for Pods bound to its node, has the runtime start them, runs probes and reports status. kube-proxy: programs networking rules so Service IPs reach Pods (unless the CNI replaces it). The container runtime, usually containerd with runc, which actually creates the containers.
+
+</Ask>
+<Ask id="cp-reconcile" q="Explain the reconciliation loop and why being level-triggered makes Kubernetes robust." section="24-the-reconciliation-loop-watch-compare-act">
+
+Each controller forever compares desired state (spec) with actual state and takes a step to close the gap, waking on watch events and periodic resyncs. Because it acts on the current state rather than on individual events, a missed event, a restart or a network blip doesn't lose anything; the next pass sees the same gap and fixes it.
+
+</Ask>
+<Ask id="cp-apply-trace" q="Walk through every step from kubectl apply -f pod.yaml to a running process." section="25-what-happens-when-you-apply-a-pod">
+
+kubectl reads kubeconfig and sends the object over HTTPS. The API server authenticates, authorizes, runs admission and validation, and stores it in etcd: Pending, no node. kubectl prints created. The scheduler sees an unbound Pod and binds it to a node. That node's kubelet sees it and calls the runtime over CRI: create the sandbox (pause container, IP from the CNI), pull the image, create and start containers. containerd starts a shim, which runs runc, which sets up namespaces and cgroups and execs the process. The kubelet reports status back.
+
+</Ask>
+<Ask id="cp-stuck-pod-where" q="A Pod is stuck. How do you decide which component to blame?" section="25-what-happens-when-you-apply-a-pod">
+
+Look at where it stopped. Pending with no node and no Scheduled event: the scheduler (down, or no node fits; describe usually says why). Assigned but ContainerCreating, ImagePullBackOff or ErrImagePull: the kubelet and runtime on that node, often a bad image name or registry access. Running but restarting (CrashLoopBackOff): the app itself; read its logs.
+
+</Ask>
+<Ask id="cp-dockershim" q="Tell the Docker and containerd story: CRI, OCI, dockershim, and what changed in 1.24." section="26-container-runtimes-cri-containerd-and-the-docker-story">
+
+Kubernetes was first built for Docker. To support other runtimes it defined the CRI, the gRPC API the kubelet uses; OCI standardizes image format and low-level runtimes. Docker Engine never implemented the CRI, so the kubelet carried dockershim. Docker's core, containerd, became its own project with CRI support, so in 1.24 dockershim was removed and nodes use containerd or CRI-O directly. Docker-built images still work because they're OCI images; Docker remains a fine build tool.
+
+</Ask>
+<Ask id="cp-crictl-when" q="When would you use crictl, and why not use it to create containers?" section="26-container-runtimes-cri-containerd-and-the-docker-story">
+
+To debug a node through the CRI when kubectl can't help: the API server is down or a Pod never registered. It's Pod-aware: crictl pods, ps, logs, exec, images. Don't create containers with it, because the kubelet only keeps what it created and deletes the rest.
+
+</Ask>
+<Ask id="cp-kubeconfig" q="What is in a kubeconfig, and how do you safely work with several clusters?" section="28-kubectl-and-kubeconfig">
+
+Clusters (API URL and CA), users (credentials), contexts (cluster plus user plus default namespace), and current-context. Use kubectl config get-contexts, current-context and use-context, or --context per command. Check the current context before anything destructive, and protect the file like a private key because it holds admin credentials.
+
+</Ask>
+</Checkpoint>
+
+---
+
+## 6. Resources
+
+<Resource href="https://kubernetes.io/docs/concepts/architecture/" type="docs" time="30m" required>Kubernetes docs: Cluster Architecture (components, nodes, controllers)</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/overview/components/" type="docs" time="15m" required>Kubernetes docs: Kubernetes Components</Resource>
+<Resource href="https://kind.sigs.k8s.io/docs/user/quick-start/" type="docs" time="20m" required>kind: Quick Start (install, multi-node configs, contexts)</Resource>
+<Resource href="https://kubernetes.io/blog/2022/02/17/dockershim-faq/" type="article" time="10m">Kubernetes blog: Updated Dockershim Removal FAQ</Resource>
+<Resource href="https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/" type="docs" time="15m">Kubernetes docs: Debugging Kubernetes nodes with crictl</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/" type="docs" time="15m">Kubernetes docs: Organizing cluster access using kubeconfig files</Resource>

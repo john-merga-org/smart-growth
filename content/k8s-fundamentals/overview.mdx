@@ -1,0 +1,138 @@
+# Kubernetes Fundamentals
+
+**Student profile:** Backend engineer (TypeScript/Node, Express, some Go and Python). Comfortable in a Linux shell and with HTTP services. Has used Docker a little, has not run anything on Kubernetes.
+**Target:** Run, update and debug real multi-service apps on Kubernetes with confidence, and understand *why* the cluster does what it does. This is the foundation for the CKAD/CKA later, not the exam itself.
+**Pace:** ~6 hrs/week, about **16 weeks (~3.5 months)**.
+**Your lab:** a local cluster made with [kind](https://kind.sigs.k8s.io) (Kubernetes in Docker) on your Linux machine. Phase 3 adds a kubeadm cluster on VMs and a short-lived managed cluster in the cloud.
+
+---
+
+## The core idea of this course
+
+Kubernetes looks like a huge list of objects and commands. Underneath, it's one idea repeated everywhere:
+
+1. **You declare desired state.** You don't say "start 3 containers". You write "there should be 3 replicas of this Pod" into the cluster's database, through the API server.
+2. **Controllers reconcile.** Small loops watch the actual state, compare it with the desired state, and act to close the gap: start a Pod, kill a Pod, swap an old version for a new one. Forever.
+3. **Everything else is detail.** A ReplicaSet, a Deployment, a Service, a node agent: each is a desired-state record plus a controller that makes it true.
+
+Once you see that loop, most "why did Kubernetes do *that*?" questions answer themselves. A Pod you deleted came back? A controller saw 2 where 3 were wanted. A Pod you created by hand vanished? A controller saw 4 where 3 were wanted.
+
+The backend analogy that helps most: **Kubernetes is a database plus a set of workers that keep the world in sync with it.** `kubectl` is just an HTTP client for that database's API.
+
+<Card id="k8s-core-idea" q="What is the one idea Kubernetes repeats everywhere?">
+
+You declare **desired state** (stored via the API server in etcd). **Controllers** run loops that compare actual state with desired state and act to close the gap, forever. Every object type is a desired-state record plus a controller that makes it true.
+
+</Card>
+
+<Card id="k8s-backend-analogy" q="Backend analogy: what is Kubernetes, and what is kubectl?">
+
+A database of desired state plus workers (controllers) that keep the real world in sync with it. `kubectl` is just an HTTP client for that database's API (the API server).
+
+</Card>
+
+---
+
+## Where the material comes from
+
+The spine of this course is the Udemy course **Kubernetes for the Absolute Beginners – Hands-on** (KodeKloud). Its videos live on your disk under `/data/k8/`. Every section in a module tells you which lecture to watch, like this:
+
+<Callout type="note">
+
+**Watch:** 05 › 27 Deployments (local video)
+
+</Callout>
+
+The Udemy course is a good, gentle introduction. Reviewed as a working Kubernetes engineer would review it, it also has gaps and some dated material, so this course changes it in places:
+
+| The video says or does | This course does instead | Why |
+|---|---|---|
+| "Master" and "minion" nodes | **Control plane** and **worker nodes** | Current Kubernetes terms; the old ones are gone from the docs |
+| Docker as the container runtime | **containerd** via the CRI; Docker only for building images | Kubernetes removed Docker Engine support (dockershim) in v1.24 |
+| minikube on VirtualBox | **kind** on the Docker you already have | No hypervisor, starts in ~30 s, multi-node clusters on one laptop |
+| `kubectl create` and `apply` are "the same" | **`kubectl apply -f`** as the default, everything in files under git | Declarative config is how real teams work; `create` is for one-offs |
+| `--record` for rollout history | The `kubernetes.io/change-cause` annotation | `--record` is deprecated |
+| ReplicationController covered in depth | One paragraph: it's legacy | Nobody writes new ones |
+| Rolling updates with no health checks | **Readiness probes** from Module 05 on | Without them, a "zero-downtime" rollout sends traffic to Pods that aren't ready |
+| No debugging method | A fixed **debug loop**: get → describe → events → logs → exec | Most of real Kubernetes work is figuring out why something isn't running |
+| Stops at Services and a sample app | Adds namespaces, ConfigMaps, Secrets, probes, resources, storage, Ingress, Helm | You can't run a real app without them |
+
+<Card id="k8s-dated-video-fixes" q="Name four things from the Udemy videos this course updates, and why.">
+
+Master/minion → control plane/worker nodes (current terms). Docker runtime → containerd via CRI (dockershim removed in v1.24). `--record` → `kubernetes.io/change-cause` annotation (deprecated). Rolling updates without probes → readiness probes (otherwise traffic hits Pods that aren't ready). Also: minikube/VirtualBox → kind; `apply -f` as the default.
+
+</Card>
+
+---
+
+## How every module works
+
+Each module has the same structure:
+
+1. **Why it matters:** the problem this object or idea solves, framed in backend terms you already know.
+2. **Concepts:** the lesson. Read it with a terminal open and your kind cluster running. Each section names the video to watch alongside it.
+3. **Drills:** short hands-on tasks on your cluster (15–45 min each). This is where the learning happens. Type every command and every manifest yourself.
+4. **Build:** one project that combines the module's ideas, kept in a git repo.
+5. **Quiz** and **Checkpoint:** quick self-tests, then questions you answer *out loud without notes*. If you can't, re-read the section before moving on.
+6. **Resources:** the official docs page for each idea, plus at most one or two extras.
+
+### Weekly rhythm (6 hrs)
+
+- **~1.5 hrs:** the videos and the Concepts section.
+- **~3.5 hrs:** drills and the Build, on your cluster.
+- **~1 hr:** review cards and redo one old drill from memory.
+
+<Card id="k8s-module-structure" q="What are the parts of every module in this course, and the weekly time split?">
+
+Why it matters → Concepts (with the matching video) → Drills on your cluster → Build → Quiz + out-loud Checkpoint → Resources. Weekly: ~1.5 h videos/reading, ~3.5 h hands-on, ~1 h review.
+
+</Card>
+
+---
+
+## How to practice
+
+### The debug loop (use it every time something isn't running)
+
+1. `kubectl get <kind>`: what's the status? (`Pending`, `ImagePullBackOff`, `CrashLoopBackOff`, `0/1 READY`...)
+2. `kubectl describe <kind> <name>`: read the **Events** at the bottom. They usually name the problem.
+3. `kubectl logs <pod>` (add `--previous` if it restarted): what did the app say before it died?
+4. `kubectl exec -it <pod> -- sh`: look from inside: files, env vars, can it reach its dependencies?
+5. Fix the **manifest file**, then `kubectl apply -f` it again. Don't hot-patch the live object and forget.
+
+<Card id="k8s-debug-loop" q="What are the five steps of the debug loop?">
+
+1. `kubectl get` (status). 2. `kubectl describe` (read the Events). 3. `kubectl logs` (`--previous` after a restart). 4. `kubectl exec -it … -- sh` (look from inside). 5. Fix the manifest file and `kubectl apply -f` again.
+
+</Card>
+
+### Rules
+
+- **Type it, don't paste it.** Manifests especially. The structure (`apiVersion`, `kind`, `metadata`, `spec`) needs to be in your fingers.
+- **Files in git, `apply -f`.** Every object you keep lives in a YAML file in your `k8s-journey` repo. Imperative commands are for exploring and for generating YAML (`--dry-run=client -o yaml`).
+- **Predict before you run.** Before each command in a drill, say what you expect to happen. When you're wrong, that's the lesson.
+- **`kubectl explain` before Google.** `kubectl explain deployment.spec.strategy` is faster and always matches your cluster's version.
+- **Break things on purpose.** Every module has drills that break something. Fix it with the debug loop, not by deleting and starting over.
+
+<Card id="k8s-course-rules" q="What are the five practice rules of this course?">
+
+Type manifests, don't paste. Keep objects as files in git and `apply -f` them (imperative commands only to explore or generate YAML). Predict before you run. `kubectl explain` before Google. Break things on purpose and fix them with the debug loop.
+
+</Card>
+
+---
+
+## Core resources (the short list)
+
+<Resource href="https://kubernetes.io/docs/concepts/" type="docs" required>Kubernetes docs: Concepts. The reference for every object in this course</Resource>
+<Resource href="https://kubernetes.io/docs/reference/kubectl/quick-reference/" type="docs" required>kubectl Quick Reference. Keep it open while you work</Resource>
+<Resource href="https://kind.sigs.k8s.io/docs/user/quick-start/" type="docs">kind Quick Start: your local cluster</Resource>
+<Resource href="https://kubernetes.io/docs/tutorials/kubernetes-basics/" type="course" time="2h">Kubernetes Basics: the official interactive tutorial</Resource>
+<Resource href="https://www.manning.com/books/kubernetes-in-action-second-edition" type="book">Kubernetes in Action, 2nd ed. (Marko Lukša): the best book once the basics click</Resource>
+<Resource href="https://learnk8s.io/troubleshooting-deployments" type="article" time="30m">learnk8s: A visual guide on troubleshooting Kubernetes deployments</Resource>
+
+---
+
+## Running in parallel
+
+The [DSA course](/c/dsa) and the [Frontend course](/c/frontend) keep going alongside this one. Track everything on the [Progress page](/progress).

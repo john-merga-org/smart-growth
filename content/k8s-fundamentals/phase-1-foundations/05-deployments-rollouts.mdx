@@ -1,0 +1,900 @@
+# Module 05: Deployments: Rollouts and Rollbacks
+
+**Time:** ~1.5 weeks (9 hrs)
+**Prerequisites:** Modules 03 (Pods) and 04 (ReplicaSets, labels, selectors)
+**You'll need:** your kind cluster running, and your `hello-k8s` images `v1` (blue) and `v2` (green) in a public registry (Module 01 Build)
+
+---
+
+## 1. Why it matters (the backend analogy)
+
+A ReplicaSet keeps N copies of *one* Pod template running. That's great until you ship a new version. Change the image in a ReplicaSet and nothing happens to the running Pods (you saw this in Module 04); you'd have to delete them yourself, which is exactly the hand-run deploy you were trying to escape.
+
+A **Deployment** is the object you actually use for stateless apps. It owns ReplicaSets the way a ReplicaSet owns Pods, and it adds the release process on top:
+
+| Backend release practice you know | Deployment feature |
+|---|---|
+| Deploy behind a load balancer one server at a time | **Rolling update**: replace Pods a few at a time |
+| "Only send traffic once the health check passes" | **Readiness probes** gate each step of the rollout |
+| `git revert` + redeploy when a release is bad | **`kubectl rollout undo`**: back to the previous ReplicaSet in seconds |
+| Release notes / deploy log | **Revision history** with a change-cause |
+| Drain connections before stopping a server | **Graceful termination**: SIGTERM, grace period, `preStop` |
+| "Freeze deploys while we batch three config changes" | **`rollout pause` / `resume`** |
+
+You'll almost never create a bare ReplicaSet or Pod for an app again. From here on, stateless apps are Deployments.
+
+<Card id="why-deployments" q="What does a Deployment add on top of a ReplicaSet?">
+
+The release process: rolling updates (a new ReplicaSet scaled up while the old one scales down), rollback to earlier revisions, revision history, rollout pause/resume, and rollout speed controls. A ReplicaSet alone won't touch running Pods when you change its template.
+
+</Card>
+
+---
+
+## 2. Concepts
+
+### 2.1 The hierarchy: Deployment → ReplicaSet → Pod
+
+<Callout type="note">
+
+**Watch:** 05 › 27 Deployments (local video)
+
+</Callout>
+
+Three objects, three controllers, one chain of ownership:
+
+```text
+Deployment  hello                       ← you write this
+  └── ReplicaSet  hello-7d9c5b8f4d      ← the Deployment controller creates it
+        ├── Pod   hello-7d9c5b8f4d-x2kqp   ← the ReplicaSet controller creates these
+        ├── Pod   hello-7d9c5b8f4d-9mvlt
+        └── Pod   hello-7d9c5b8f4d-c4z8r
+```
+
+- You manage the **Deployment**. You never edit its ReplicaSets or Pods directly; the controllers would fight you (Module 04).
+- The Deployment controller creates **one ReplicaSet per version of the Pod template**. During a rollout, two exist at once: the old one scaling down, the new one scaling up.
+- **Names tell you the chain.** A ReplicaSet is named `<deployment>-<pod-template-hash>`; its Pods add a random 5-character suffix. The hash is a hash of the Pod template, and it's also added as a **`pod-template-hash` label** on the ReplicaSet's selector and its Pods. That label is how two ReplicaSets of the same Deployment avoid claiming each other's Pods.
+
+Each object also records its owner in `metadata.ownerReferences`, which is why `kubectl delete deployment hello` removes the ReplicaSets and Pods too (garbage collection).
+
+<Card id="deploy-rs-pod-chain" q="Describe the Deployment → ReplicaSet → Pod chain and how names reflect it.">
+
+You manage the Deployment; its controller creates one ReplicaSet per Pod-template version, named `<deployment>-<pod-template-hash>`; that ReplicaSet creates Pods named `<rs-name>-<random5>`. Owner references link them, so deleting the Deployment garbage-collects the rest.
+
+</Card>
+
+<Card id="pod-template-hash" q="What is the pod-template-hash label for?">
+
+The Deployment controller adds it to each ReplicaSet's selector and Pods (a hash of the Pod template). It keeps the old and new ReplicaSets of one Deployment from selecting each other's Pods during a rollout.
+
+</Card>
+
+### 2.2 Creating and inspecting a Deployment
+
+<Callout type="note">
+
+**Watch:** 05 › 28 Demo - Deployments and 05 › 37 Solution - Deployments (local videos)
+
+</Callout>
+
+A Deployment manifest looks exactly like a ReplicaSet manifest with a different `kind`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello
+  labels:
+    app: hello
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hello            # must match the template's labels (Module 04)
+  template:
+    metadata:
+      labels:
+        app: hello
+    spec:
+      containers:
+        - name: hello
+          image: ghcr.io/<you>/hello-k8s:v1   # pinned tag, never :latest
+          ports:
+            - containerPort: 3000
+```
+
+Don't type the skeleton from scratch every time. Generate it, then edit:
+
+```bash
+kubectl create deployment hello --image=ghcr.io/<you>/hello-k8s:v1 --replicas=3 \
+  --port=3000 --dry-run=client -o yaml > hello-deployment.yaml
+kubectl apply -f hello-deployment.yaml
+```
+
+Inspect it from the top down:
+
+```bash
+kubectl get deploy hello          # READY 3/3, UP-TO-DATE 3, AVAILABLE 3
+kubectl get rs -l app=hello       # one ReplicaSet: DESIRED 3, CURRENT 3, READY 3
+kubectl get pods -l app=hello --show-labels   # note pod-template-hash
+kubectl get all                   # deployments, replicasets, pods and services together
+kubectl describe deploy hello     # strategy, conditions, events ("Scaled up replica set ... to 3")
+```
+
+The three `get deploy` columns are worth memorizing: **READY** is ready Pods / desired, **UP-TO-DATE** is Pods running the *current* template, **AVAILABLE** is Pods that have been ready for at least `minReadySeconds` (2.6). During a rollout these diverge, and that's how you read its progress.
+
+(`kubectl get all` doesn't show *everything*: no ConfigMaps, Secrets or Ingresses. It's a convenience, not an inventory.)
+
+<Card id="deploy-columns" q="In kubectl get deploy, what do READY, UP-TO-DATE and AVAILABLE mean?">
+
+READY: ready Pods / desired replicas. UP-TO-DATE: Pods running the current Pod template. AVAILABLE: Pods ready for at least `minReadySeconds`. They diverge during a rollout.
+
+</Card>
+
+<Card id="generate-deploy-yaml" q="How do you generate a Deployment manifest instead of typing it?">
+
+`kubectl create deployment NAME --image=IMAGE --replicas=N --port=P --dry-run=client -o yaml > file.yaml`, then edit the file and `kubectl apply -f` it.
+
+</Card>
+
+### 2.3 Rollouts and revisions
+
+<Callout type="note">
+
+**Watch:** 05 › 38 Deployments - Update and Rollback (local video)
+
+</Callout>
+
+A **rollout** is the process of moving the Deployment's Pods to a new Pod template. The rule that explains everything about them:
+
+**Only a change to `spec.template` triggers a rollout.** Change the image, an env var, a label on the template, a probe, resources: new rollout. Change `replicas`: no rollout, the current ReplicaSet just scales. Change the Deployment's own `metadata.labels` or annotations: no rollout.
+
+Each rollout creates (or reuses) a ReplicaSet, and each ReplicaSet is a **revision**:
+
+```bash
+kubectl rollout status deployment/hello      # follows the rollout until done (or failed); exit code 0 on success
+kubectl rollout history deployment/hello     # list revisions
+kubectl rollout history deployment/hello --revision=2   # the full Pod template of revision 2
+kubectl rollout undo deployment/hello        # back to the previous revision
+kubectl rollout undo deployment/hello --to-revision=1
+```
+
+**How undo really works:** it copies the old revision's Pod template back into the Deployment, which is a template change, so it's a *new* rollout. The old ReplicaSet scales back up and becomes the **newest** revision. That's why, in the demo, rolling back from revision 3 to 2 produced revision **4**, and revision 2 vanished from the list: it *is* revision 4 now. History is a list of distinct templates, not a log of events.
+
+Old ReplicaSets stay around at 0 replicas so undo is instant. `spec.revisionHistoryLimit` (default **10**) caps how many are kept; older ones are deleted and can no longer be rolled back to.
+
+#### Recording why: the change-cause
+
+The video uses `--record`. **It's deprecated**; don't use it. The `CHANGE-CAUSE` column of `rollout history` comes from the **`kubernetes.io/change-cause` annotation** on the Deployment, which is copied onto the new revision when the rollout happens. Put it in your manifest next to the change it describes:
+
+```yaml
+metadata:
+  name: hello
+  annotations:
+    kubernetes.io/change-cause: "v2: green theme, faster startup"
+```
+
+or set it imperatively right after a change: `kubectl annotate deployment hello kubernetes.io/change-cause="v2 green" --overwrite`.
+
+<Card id="what-triggers-rollout" q="What triggers a rollout, and what doesn't?">
+
+Only changes to `spec.template` (image, env, template labels, probes, resources…). Changing `replicas` just scales the current ReplicaSet; changing the Deployment's own metadata does nothing to Pods.
+
+</Card>
+
+<Card id="undo-renumbering" q="You're at revision 3 and run rollout undo. Why does history now show 1, 3, 4?">
+
+Undo copies revision 2's template back into the Deployment, which is a new rollout. Revision 2's ReplicaSet scales up and becomes revision 4. History lists distinct templates, so 2 disappears.
+
+</Card>
+
+<Card id="change-cause" q="How do you record why a rollout happened, now that --record is deprecated?">
+
+Set the `kubernetes.io/change-cause` annotation on the Deployment (in the manifest, or with `kubectl annotate … --overwrite`). It's copied onto the new revision and shown in `rollout history`.
+
+</Card>
+
+### 2.4 Strategies: RollingUpdate and Recreate
+
+<Callout type="note">
+
+**Watch:** 05 › 38 Deployments - Update and Rollback (strategies part) and 05 › 41 Solution - Rolling Updates and Rollbacks (local videos)
+
+</Callout>
+
+`spec.strategy.type` is one of two values.
+
+**`Recreate`:** scale the old ReplicaSet to 0, wait for every old Pod to terminate, then scale the new one up. There is a window with **zero Pods**: downtime. The lab showed it as `502 Bad Gateway`s. Use it only when two versions *must not* run at the same time: a schema change the old code can't survive, a singleton that holds a lock, or a `ReadWriteOnce` volume only one Pod can mount.
+
+**`RollingUpdate` (the default):** scale the new ReplicaSet up and the old one down in steps, bounded by two numbers:
+
+| Field | Meaning | Default | Rounding |
+|---|---|---|---|
+| `maxSurge` | How many Pods **above** `replicas` may exist during the rollout | 25% | percentages round **up** |
+| `maxUnavailable` | How many Pods **below** `replicas` may be unavailable | 25% | percentages round **down** |
+
+They can't both be 0 (the rollout could never move). Worked examples with the defaults:
+
+| replicas | maxSurge (25%, up) | maxUnavailable (25%, down) | Max Pods at once | Min available at once |
+|---|---|---|---|---|
+| 4 | 1 | 1 | 5 | 3 |
+| 10 | 3 (2.5 → 3) | 2 (2.5 → 2) | 13 | 8 |
+| 3 | 1 (0.75 → 1) | 0 (0.75 → 0) | 4 | 3 |
+
+The pattern you'll use most for small services is **`maxSurge: 1, maxUnavailable: 0`**: add one new Pod, wait until it's ready, remove one old Pod, repeat. Capacity never drops below `replicas`; the cost is one extra Pod's worth of resources and a slower rollout.
+
+```yaml
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+```
+
+`maxUnavailable: 0` is only safe if "ready" means something, which is the point of 2.6.
+
+<Card id="recreate-vs-rolling" q="Recreate vs RollingUpdate: what happens, and when would you choose Recreate?">
+
+Recreate kills all old Pods before creating new ones, so there's downtime. RollingUpdate (default) replaces Pods in steps bounded by maxSurge/maxUnavailable. Choose Recreate only when two versions must never run together (incompatible schema change, singleton/lock holder, ReadWriteOnce volume).
+
+</Card>
+
+<Card id="surge-unavailable-math" q="Defaults are 25% maxSurge and maxUnavailable. With 10 replicas, what's the most Pods at once and the fewest available?">
+
+maxSurge rounds up: 2.5 → 3, so at most 13 Pods. maxUnavailable rounds down: 2.5 → 2, so at least 8 available.
+
+</Card>
+
+<Card id="surge1-unavailable0" q="What does maxSurge 1 / maxUnavailable 0 do, and what does it depend on?">
+
+Adds one new Pod, waits for it to become ready, then removes one old Pod, so capacity never drops below `replicas`. It's only safe if readiness is meaningful, i.e. there's a real readiness probe.
+
+</Card>
+
+### 2.5 When a rollout goes wrong
+
+<Callout type="note">
+
+**Watch:** 05 › 39 Demo - Deployments - Update and Rollback, the last part with the bad image (local video)
+
+</Callout>
+
+In the demo, the image was changed to a tag that doesn't exist, with 6 replicas and the default 25%:
+
+- maxSurge = 2 (1.5 rounded up), maxUnavailable = 1 (1.5 rounded down).
+- The controller scaled the old ReplicaSet to 5 (one unavailable allowed) and the new one to 3 (6 + 2 surge = 8 total).
+- The 3 new Pods sat in `ErrImagePull` / `ImagePullBackOff`, never ready. So the controller **stopped**: it can't remove more old Pods without dropping below 5 available, and it can't add more new ones above 8 total.
+
+That's why `get deploy` showed 8 current and 3 up-to-date, and `rollout status` hung at "3 out of 6 new replicas have been updated". **The stall is the safety feature:** 5 working Pods kept serving.
+
+What Kubernetes does *not* do is roll back by itself. After `spec.progressDeadlineSeconds` (default **600**) without progress, the Deployment's `Progressing` condition becomes `False` with reason **`ProgressDeadlineExceeded`**, and `kubectl rollout status` exits non-zero. That's the signal for a human or a CI pipeline to run `kubectl rollout undo`.
+
+```bash
+kubectl rollout status deployment/hello --timeout=120s || kubectl rollout undo deployment/hello
+```
+
+How to diagnose a stalled rollout, with the debug loop:
+
+```bash
+kubectl get deploy hello                 # UP-TO-DATE stuck below desired
+kubectl get rs -l app=hello              # old RS partly scaled down, new RS not READY
+kubectl get pods -l app=hello            # new Pods: ImagePullBackOff / CrashLoopBackOff / 0/1 Running
+kubectl describe pod <new-pod>           # Events say why
+kubectl describe deploy hello            # Conditions: Progressing False, ProgressDeadlineExceeded
+```
+
+<Card id="stalled-rollout" q="Why does a rollout to a broken image stall instead of taking the app down?">
+
+New Pods never become ready, and the controller won't remove old Pods below `replicas − maxUnavailable` available, nor add Pods above `replicas + maxSurge`. So it stops with the old Pods still serving.
+
+</Card>
+
+<Card id="progress-deadline" q="What happens when a rollout makes no progress for progressDeadlineSeconds?">
+
+After the deadline (default 600 s), the `Progressing` condition becomes False with reason `ProgressDeadlineExceeded` and `rollout status` exits non-zero. Kubernetes does **not** roll back automatically; you or CI run `rollout undo`.
+
+</Card>
+
+### 2.6 Readiness probes: what makes a rollout safe
+
+<Callout type="note">
+
+**Watch:** nothing; this section isn't in the Udemy course. It's the most important addition in this module.
+
+</Callout>
+
+How does the Deployment controller know a new Pod is "ready", so it can remove an old one? **Without a readiness probe, a Pod is Ready as soon as its containers have started.** Started is not serving. Your app may still be connecting to the database, warming caches or loading a model, and the rollout happily kills a working old Pod for each one. Traffic (via a Service, Module 07) goes to Pods that answer with errors or not at all. That's how "zero-downtime" rolling updates cause outages.
+
+A **readiness probe** tells the kubelet how to check whether the container can serve:
+
+```yaml
+containers:
+  - name: hello
+    image: ghcr.io/<you>/hello-k8s:v2
+    readinessProbe:
+      httpGet:
+        path: /readyz
+        port: 3000
+      periodSeconds: 2         # check every 2 s
+      failureThreshold: 3      # 3 failures in a row → NotReady
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 3000
+      periodSeconds: 10
+      failureThreshold: 3
+```
+
+What readiness changes:
+
+- A Pod is **Ready** only while its readiness probe passes. A rollout step waits for that.
+- A NotReady Pod is **removed from Service endpoints**: it gets no traffic but keeps running. Readiness is checked for the Pod's whole life, not just at startup.
+- **`minReadySeconds`** (on the Deployment spec, default 0) adds "and stay Ready this long" before a Pod counts as *available*. It catches Pods that pass once and then crash a few seconds later.
+
+**Liveness is different:** a failing liveness probe makes the kubelet **restart** the container. Use it for "the process is wedged" (deadlocked, stuck event loop), check only the process itself, and never a dependency. If `/healthz` checked the database, a database blip would restart every Pod at once. Full treatment of probes, including startup probes, is in Module 10.
+
+<Card id="readiness-default" q="Without a readiness probe, when is a Pod considered Ready, and why is that dangerous during a rollout?">
+
+As soon as its containers have started. The rollout removes old Pods as soon as new ones "start", even if they can't serve yet, so traffic hits Pods that fail. Readiness probes make "ready" mean "can serve".
+
+</Card>
+
+<Card id="readiness-vs-liveness" q="Readiness probe vs liveness probe: what does failing each one do?">
+
+Failing readiness: Pod marked NotReady, removed from Service endpoints, rollout waits; the container keeps running. Failing liveness: the kubelet restarts the container. Liveness must check only the process, never dependencies.
+
+</Card>
+
+<Card id="min-ready-seconds" q="What does minReadySeconds add?">
+
+A new Pod must stay Ready for that many seconds (without crashing) before it counts as available, so a rollout doesn't proceed past Pods that pass once and then die.
+
+</Card>
+
+### 2.7 Graceful shutdown during a rollout
+
+<Callout type="note">
+
+**Watch:** nothing; this section isn't in the Udemy course.
+
+</Callout>
+
+Half of every rollout is *stopping* old Pods. When a Pod is deleted:
+
+1. The Pod is marked `Terminating`. **At the same time, two things start in parallel:** the kubelet begins shutting the containers down, and the endpoints controller removes the Pod from Services so kube-proxy (on every node) stops routing to it.
+2. The kubelet runs the container's **`preStop` hook**, if any, then sends **SIGTERM** to PID 1.
+3. If the container is still running after **`terminationGracePeriodSeconds`** (default **30**, and the `preStop` time counts against it), it gets **SIGKILL**.
+
+The trap is the parallelism in step 1. Your app gets SIGTERM and stops accepting connections, but some nodes' routing rules haven't been updated yet, so for a moment new requests still arrive and get `connection refused`. The fix is boring and universal: **wait a few seconds before shutting down**, with a `preStop` sleep:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 30
+  containers:
+    - name: hello
+      lifecycle:
+        preStop:
+          exec:
+            command: ["sleep", "5"]    # needs a sleep binary in the image (node:22-slim has one)
+```
+
+On Kubernetes 1.30+ you can use the built-in action instead, which needs nothing in the image: `preStop: { sleep: { seconds: 5 } }`.
+
+Then your app's own SIGTERM handler (Module 01 Build) finishes in-flight requests and exits. Together: no new traffic arrives, existing requests complete, the process exits cleanly well inside the grace period.
+
+<Card id="pod-termination-sequence" q="What happens, in order, when a Pod is deleted during a rollout?">
+
+Pod marked Terminating; in parallel, it's removed from Service endpoints and the kubelet starts shutdown: `preStop` hook runs, then SIGTERM to PID 1, then SIGKILL if still running after `terminationGracePeriodSeconds` (default 30, including preStop time).
+
+</Card>
+
+<Card id="prestop-sleep" q="Why add a preStop sleep of a few seconds?">
+
+Endpoint removal and SIGTERM happen in parallel, so routing rules on some nodes may still send new requests to a Pod that has already stopped accepting. A short sleep before SIGTERM lets routing catch up, avoiding `connection refused` during rollouts.
+
+</Card>
+
+### 2.8 Changing a Deployment: apply, set image, edit, pause
+
+<Callout type="note">
+
+**Watch:** 05 › 39 Demo - Deployments - Update and Rollback and 05 › 41 Solution - Rolling Updates and Rollbacks (local videos)
+
+</Callout>
+
+Three ways to change the image, and the problem with two of them:
+
+| Command | What it does | Catch |
+|---|---|---|
+| Edit the file, `kubectl apply -f hello-deployment.yaml` | Declarative: the file in git is the truth | None. **This is the default.** |
+| `kubectl set image deployment/hello hello=ghcr.io/<you>/hello-k8s:v2` | Changes the live object only (`hello=` is the *container* name) | **File drift**: your file still says v1. The next `apply` of that file silently rolls you back |
+| `kubectl edit deployment hello` | Opens the live object in an editor | Same drift, plus no review and no history of what you typed |
+
+`set image` and `edit` are fine for exploring and for emergencies. Afterwards, update the file and commit, so git matches the cluster. The same goes for `rollout undo`: it changes the live template, so revert the commit too, or the next `apply` re-ships the bad version.
+
+#### Batching changes with pause and resume
+
+Every template change starts a rollout immediately. To make several changes and roll them out *once*:
+
+```bash
+kubectl rollout pause deployment/hello
+kubectl set image deployment/hello hello=ghcr.io/<you>/hello-k8s:v2
+kubectl set env deployment/hello COLOR=purple
+kubectl set resources deployment/hello -c hello --limits=memory=256Mi
+kubectl rollout resume deployment/hello    # one rollout, one new revision
+```
+
+While paused, template changes are recorded but nothing rolls out, and you can't `rollout undo` a paused Deployment. In a declarative workflow you rarely need this: put all three changes in the file and `apply` once.
+
+<Card id="set-image-drift" q="What's the risk of kubectl set image or kubectl edit on a Deployment?">
+
+File drift: the live object changes but your manifest in git doesn't, so the next `kubectl apply -f` silently reverts the change. Use them for exploring or emergencies, then update and commit the file. (Same after `rollout undo`.)
+
+</Card>
+
+<Card id="pause-resume" q="What do rollout pause and resume do?">
+
+Pause stops template changes from triggering rollouts; resume rolls out all accumulated changes as one rollout and one revision. You can't undo while paused. Declaratively, the same effect comes from changing everything in the file and applying once.
+
+</Card>
+
+### 2.9 Beyond rolling updates: blue/green and canary
+
+<Callout type="note">
+
+**Watch:** nothing; this section isn't in the Udemy course.
+
+</Callout>
+
+The two built-in strategies cover most services. Two more release patterns come up constantly in real teams; Kubernetes doesn't have a `kind` for them, but you can build both from Deployments and Services:
+
+- **Blue/green:** run the new version as a *second* Deployment (`hello-green`) next to the old (`hello-blue`), test it, then switch the Service's selector from `version: blue` to `version: green` in one change. Rollback is switching back. Cost: double capacity during the switch.
+- **Canary:** run a small Deployment of the new version whose Pods *also* match the Service's selector, so it gets a share of traffic proportional to its Pod count (1 canary + 9 stable ≈ 10%). Watch error rates, then promote or delete it.
+
+Tools like Argo Rollouts and Flagger automate both, including automatic rollback on bad metrics. You'll be able to build the manual versions after Module 07.
+
+<Card id="bluegreen-canary" q="How do you do blue/green and canary with plain Deployments and Services?">
+
+Blue/green: two Deployments, switch the Service selector from one version label to the other in one change (instant rollback, double capacity). Canary: a small second Deployment whose Pods also match the Service selector, getting traffic in proportion to its Pod count; promote or delete it.
+
+</Card>
+
+---
+
+## 3. Drills
+
+Do these in `k8s-journey/05/`. Replace `<you>` with your registry user. Keep a second terminal open running `kubectl get rs,pods -l app=hello -w` during rollouts; watching it is half the lesson.
+
+<Drill id="d1-map-the-chain" title="D1. Map the chain (20 min)">
+
+Generate a manifest with `kubectl create deployment hello --image=ghcr.io/<you>/hello-k8s:v1 --replicas=3 --port=3000 --dry-run=client -o yaml > hello-deployment.yaml`, read every line of it, then `apply` it.
+
+1. Write down the Deployment name, the ReplicaSet name and the three Pod names. Which part of each name comes from where?
+2. Compare `kubectl get rs -o jsonpath='{.items[0].spec.selector}'` with the `selector` in your file. What was added?
+3. Find a Pod's owner with `kubectl get pod <pod> -o jsonpath='{.metadata.ownerReferences[0].kind}/{.metadata.ownerReferences[0].name}'`. Then the ReplicaSet's owner.
+4. Delete one Pod. Which controller replaces it, the Deployment's or the ReplicaSet's?
+
+<Answer>
+
+1. Deployment `hello`; ReplicaSet `hello-6c8f9d7b5c` (Deployment name + pod-template-hash); Pods `hello-6c8f9d7b5c-4xk2p` etc. (ReplicaSet name + random suffix). Your hashes will differ.
+
+2. The live selector has `pod-template-hash: 6c8f9d7b5c` in addition to `app: hello`. The Deployment controller added it so this ReplicaSet only ever owns Pods of this template version. The file's selector doesn't have it, and you never write it yourself.
+
+3. Pod → `ReplicaSet/hello-6c8f9d7b5c`; ReplicaSet → `Deployment/hello`.
+
+4. The **ReplicaSet** controller: it sees 2 Pods where 3 are wanted and creates one. The Deployment controller only manages ReplicaSets (how many there are, and how they're scaled during rollouts).
+
+</Answer>
+
+</Drill>
+
+<Drill id="d2-first-rollout" title="D2. Your first rollout, watched (25 min)">
+
+With the watch running in another terminal:
+
+1. Add `kubernetes.io/change-cause: "v1 initial"` to the Deployment's `metadata.annotations` and apply. Then change the image to `:v2`, the change-cause to `"v2 green"`, and apply again.
+2. Run `kubectl rollout status deployment/hello` right after. Describe what the watch showed, step by step.
+3. Run `kubectl get rs -l app=hello`. How many ReplicaSets, and how many Pods in each?
+4. `kubectl rollout history deployment/hello`. What do you see?
+
+<Answer>
+
+1–2. The watch shows a new ReplicaSet (new hash) appear with 0 desired, scale to 1, a new Pod go `ContainerCreating` → `Running`; then the old ReplicaSet drops to 2 and one old Pod goes `Terminating`; and so on until new = 3, old = 0. With 3 replicas and the defaults (maxSurge 1, maxUnavailable 0, from 25% rounded up/down), it goes one at a time and never below 3 ready.
+
+3. Two ReplicaSets: the new one with 3/3/3 and the old one with 0/0/0. The old one is kept for rollback.
+
+4. Two revisions:
+
+```text
+REVISION  CHANGE-CAUSE
+1         v1 initial
+2         v2 green
+```
+
+(If revision 1 shows `<none>`, you added the annotation in the same apply as creating it, or after; it records whatever the annotation said when that revision was rolled out.)
+
+</Answer>
+
+</Drill>
+
+<Drill id="d3-scaling-no-revision" title="D3. Prove scaling isn't a rollout (10 min)">
+
+Predict first: if you change `replicas` from 3 to 5 in the file and apply, will a new ReplicaSet appear? Will `rollout history` gain a revision? Do it and check. Then do the same with `kubectl scale deployment hello --replicas=2`. What's the catch with the second way?
+
+<Answer>
+
+No new ReplicaSet and no new revision either way: the current ReplicaSet's replica count changes and Pods are added or removed. Only `spec.template` changes trigger rollouts.
+
+The catch with `kubectl scale`: your file still says 5, so the next `apply` scales back to 5. That's the same file-drift problem as `set image`. (Teams that use an autoscaler often remove `replicas` from the file entirely, Module 10.)
+
+</Answer>
+
+</Drill>
+
+<Drill id="d4-load-loop" title="D4. Set up a zero-downtime test (20 min)">
+
+You need traffic to see downtime. This uses a **Service**, which is the subject of Module 07; for now treat it as "a stable name that load-balances across the Pods with `app: hello` that are Ready".
+
+```bash
+kubectl expose deployment hello --port=80 --target-port=3000   # preview of Module 07
+kubectl run curl --image=curlimages/curl -it --rm -- sh
+```
+
+Inside that shell, run a loop that sends ~10 requests a second for 60 seconds and counts failures:
+
+```bash
+ok=0; fail=0
+for i in $(seq 1 600); do
+  if curl -sf -m 2 http://hello/ >/dev/null; then ok=$((ok+1)); else fail=$((fail+1)); echo "FAIL $(date +%T)"; fi
+  sleep 0.1
+done; echo "ok=$ok fail=$fail"
+```
+
+
+Run the loop once with no rollout happening. What's the failure count?
+
+<Answer>
+
+`ok=600 fail=0` (give or take timing). With nothing changing, every request reaches a ready Pod. If you see failures here, check `kubectl get endpoints hello` lists 3 IPs and the Pods are `1/1 READY` before going further.
+
+Keep this shell (or re-run the `kubectl run` line) for D5–D7.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d5-no-readiness" title="D5. A rollout without readiness, then with it (40 min)">
+
+1. In the Deployment, set env `STARTUP_DELAY_SECONDS: "10"`, and make sure there's **no** readiness probe. Apply and wait for the rollout to finish.
+2. Start the D4 loop, then change the image between `:v1` and `:v2` and apply. Note the failure count.
+3. Add the readiness probe on `/readyz` from section 2.6 (and the liveness probe on `/healthz`). Apply, wait for it to finish, start the loop, and change the image again. Failure count now?
+4. Explain the difference, and say how long the second rollout took compared with the first.
+
+<Answer>
+
+2. Plenty of failures (often dozens to a few hundred, in bursts). Each new Pod counts as Ready the moment its container starts, so the rollout removes an old Pod immediately and the Service sends traffic to the new one, which returns 503 (warming up) for 10 seconds. The whole rollout finishes in a few seconds, and all three new Pods are "ready" but not serving for most of those 10 seconds.
+
+3. `fail=0` (or a stray one or two from shutdown, which D9 and the Build fix). Each new Pod stays `0/1 READY` until `/readyz` returns 200, so it gets no traffic and the old Pod isn't removed until it's ready.
+
+4. The rollout now takes ~10+ seconds per Pod (about 30–40 s for 3 replicas) instead of a couple of seconds. That's the honest speed of your app starting; the first rollout was "fast" only because it lied.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d6-bad-image" title="D6. A rollout that stalls, and the undo (25 min)">
+
+1. Scale to 6 replicas (in the file), and set the strategy back to the defaults (delete the `strategy` block). Apply.
+2. Predict: with 6 replicas and 25%/25%, what are maxSurge and maxUnavailable? How many old and new Pods will exist when a broken rollout stalls?
+3. Change the image to `ghcr.io/<you>/hello-k8s:v9-does-not-exist` and apply. Run `kubectl rollout status deployment/hello --timeout=60s`.
+4. Inspect with `get deploy`, `get rs`, `get pods`, and `describe` a new Pod. Was your prediction right? Is the app still serving (D4 loop)?
+5. Roll back with `kubectl rollout undo deployment/hello`, then fix the file to match.
+
+<Answer>
+
+2. maxSurge = ceil(1.5) = 2, maxUnavailable = floor(1.5) = 1. Old scales to 6 − 1 = 5; new scales to (6 + 2) − 5 = 3. Total 8.
+
+3. `rollout status` prints `Waiting for deployment "hello" rollout to finish: 3 out of 6 new replicas have been updated...` and times out with an error after 60 s.
+
+4. `get deploy`: READY 5/6, UP-TO-DATE 3, AVAILABLE 5. `get rs`: old RS at 5/5/5, new RS at 3/3/0. New Pods: `ErrImagePull`, then `ImagePullBackOff`; `describe pod` Events say `Failed to pull image ... not found`. The D4 loop shows **no failures**: 5 old Pods keep serving. That's the stall protecting you.
+
+5. `rollout undo` copies the previous template back; the new RS scales to 0, the old one back to 6. `rollout history` gets a new revision number for the old template. Then put the good tag back in the file (or `git checkout` it), so the next apply doesn't re-break it.
+
+(If you'd waited 10 minutes, `kubectl describe deploy hello` would show `Progressing False ProgressDeadlineExceeded`. Nothing would have rolled back on its own.)
+
+</Answer>
+
+</Drill>
+
+<Drill id="d7-recreate-outage" title="D7. See Recreate's downtime (15 min)">
+
+Set `strategy: { type: Recreate }` (remove `rollingUpdate`; Kubernetes rejects `rollingUpdate` settings with Recreate). Apply. Start the D4 loop and change the image. What do the loop and the watch show? Then set the strategy back to RollingUpdate with `maxSurge: 1, maxUnavailable: 0`.
+
+<Answer>
+
+The watch shows the old ReplicaSet go to 0 and **all** old Pods terminate before the new ReplicaSet scales up at all. The loop shows a solid block of failures lasting from the old Pods' termination until the first new Pod becomes ready (several seconds, plus the 10 s startup delay if it's still set). That's the outage you'd accept only when two versions must not run at once.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d8-surge-predictions" title="D8. Predict the Pod counts (25 min)">
+
+With 4 replicas, predict the **maximum total Pods** and **minimum ready Pods** during a rollout for each setting, then verify by watching a v1 ↔ v2 rollout for each (`kubectl get pods -l app=hello -w`):
+
+| | maxSurge | maxUnavailable |
+|---|---|---|
+| a | 25% (default) | 25% (default) |
+| b | 1 | 0 |
+| c | 0 | 1 |
+| d | 100% | 0 |
+
+Which would you use for a service with a tight memory budget on its nodes? Which for the fastest safe rollout?
+
+<Answer>
+
+| | Max total Pods | Min ready Pods | What it looks like |
+|---|---|---|---|
+| a | 5 | 3 | One surge Pod and one old Pod down at a time |
+| b | 5 | 4 | Add one, wait ready, remove one |
+| c | 4 | 3 | Remove one old first, then add its replacement: never extra Pods |
+| d | 8 | 4 | All 4 new Pods start at once; old ones removed as they become ready |
+
+Tight memory: **c** (never more than 4 Pods), accepting a capacity dip. Fastest safe: **d** (needs room for double the Pods). **b** is the common default for small services: no capacity dip, small resource bump.
+
+</Answer>
+
+</Drill>
+
+<Drill id="d9-pause-history-undo" title="D9. Pause, batch, and undo to a specific revision (25 min)">
+
+1. `kubectl rollout pause deployment/hello`. Then, one by one: set the image to `:v1`, set env `COLOR=purple`, and annotate a change-cause `"v1 purple, batched"`. Did anything roll out? Check `get rs`.
+2. `kubectl rollout resume deployment/hello`. How many rollouts happened? How many new revisions?
+3. `kubectl rollout history deployment/hello`, then inspect two revisions with `--revision=N`. Pick the one with `v2` and no purple, and roll back to it with `--to-revision`.
+4. Look at history again. What happened to the revision you rolled back to?
+5. Your file now disagrees with the cluster in several ways. List them and fix the file.
+
+<Answer>
+
+1. Nothing rolls out while paused: no new ReplicaSet, Pods unchanged. The Deployment's template is updated, though (`kubectl get deploy hello -o yaml` shows it).
+
+2. One rollout, one new revision, with all three changes in a single new ReplicaSet.
+
+3–4. `kubectl rollout undo deployment/hello --to-revision=<N>` rolls out that template; it reappears as the **newest** revision number and disappears from its old position.
+
+5. The image, `COLOR`, and the change-cause annotation were all changed imperatively, then partly undone. Make the file say exactly what you want (image, env, annotation), apply it, and confirm with `kubectl diff -f hello-deployment.yaml`, which prints nothing when file and cluster match.
+
+</Answer>
+
+</Drill>
+
+---
+
+## 4. Build: a production-shaped Deployment and a rollout test (2–3 hrs)
+
+<Build id="build-hello-deployment" title="Production-shaped hello-k8s Deployment + rollout test">
+
+In `k8s-journey/hello-k8s/k8s/`, write the Deployment you'd be happy to run in production, and a script that **proves** rollouts and rollbacks drop no requests.
+
+`hello-deployment.yaml` must have:
+- [ ] `replicas: 3` and the [recommended labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/) (`app.kubernetes.io/name`, `app.kubernetes.io/version`, …) on the Deployment and Pod template, with a selector that uses only labels that never change (not `version`)
+- [ ] A pinned image tag (`:v1`/`:v2`), never `:latest`
+- [ ] A `kubernetes.io/change-cause` annotation you update with every change
+- [ ] `strategy: RollingUpdate` with `maxSurge: 1` and `maxUnavailable: 0`, and `minReadySeconds: 5`
+- [ ] A readiness probe on `/readyz` and a liveness probe on `/healthz`, with values you can justify
+- [ ] `terminationGracePeriodSeconds` and a `preStop` sleep (2.7)
+- [ ] `STARTUP_DELAY_SECONDS` set to something non-trivial (e.g. `"8"`)
+- [ ] A `Service` named `hello` in `hello-service.yaml` (copy the one `kubectl expose` made with `-o yaml`, and clean it up; Module 07 explains it)
+
+`rollout-test.sh` must:
+- [ ] Start an in-cluster load Pod (`curlimages/curl`) that requests `http://hello/` ~10×/second for long enough to cover a rollout, and prints `ok=N fail=M` at the end
+- [ ] Run a given rollout command (e.g. `./rollout-test.sh "kubectl apply -f hello-deployment.yaml"` or `./rollout-test.sh "kubectl rollout undo deployment/hello"`) while the load runs, then wait with `kubectl rollout status`
+- [ ] Wait for the load Pod to finish, print its result from `kubectl logs`, delete it, and exit non-zero if `fail` > 0
+- [ ] Report **`fail=0`** for v1 → v2, for v2 → v1 via `rollout undo`, and for a v1 → v2 that you then roll back mid-way
+
+And:
+- [ ] In the README: a short note on why each setting is there, and what you saw when you removed the readiness probe or the `preStop` sleep and re-ran the test (it should fail)
+- [ ] After every imperative change (`rollout undo`), the file is updated so `kubectl diff -f` is empty
+
+</Build>
+
+---
+
+## Quiz
+
+<Quiz id="q-what-triggers" type="multi" answer="a,c,d">
+
+Which changes to a Deployment trigger a new rollout (a new ReplicaSet)?
+
+<Choice id="a">Changing the container image tag</Choice>
+<Choice id="b">Changing `spec.replicas` from 3 to 5</Choice>
+<Choice id="c">Adding an env var to the container</Choice>
+<Choice id="d">Adding a label under `spec.template.metadata.labels`</Choice>
+<Choice id="e">Adding an annotation to the Deployment's own `metadata`</Choice>
+
+<Why>Only changes inside `spec.template` start a rollout. Scaling just resizes the current ReplicaSet, and the Deployment's own metadata doesn't touch Pods. See [2.3](#23-rollouts-and-revisions).</Why>
+
+</Quiz>
+
+<Quiz id="q-surge-math" type="mcq" answer="c">
+
+A Deployment has 10 replicas and the default strategy (maxSurge 25%, maxUnavailable 25%). During a rollout, what are the maximum total Pods and the minimum available Pods?
+
+<Choice id="a">12 total, 8 available</Choice>
+<Choice id="b">13 total, 7 available</Choice>
+<Choice id="c">13 total, 8 available</Choice>
+<Choice id="d">12.5 total, 7.5 available</Choice>
+
+<Why>maxSurge rounds up (2.5 → 3, so 13); maxUnavailable rounds down (2.5 → 2, so 8 available). See [2.4](#24-strategies-rollingupdate-and-recreate).</Why>
+
+</Quiz>
+
+<Quiz id="q-undo-history" type="output" answer="1 3 4||1, 3, 4||1,3,4">
+
+`rollout history` shows revisions 1, 2 and 3; the Deployment is at revision 3. You run `kubectl rollout undo deployment/hello`. Which revision numbers does `rollout history` list now? (Type them in order, separated by spaces.)
+
+```bash
+kubectl rollout history deployment/hello   # 1, 2, 3
+kubectl rollout undo deployment/hello
+kubectl rollout history deployment/hello   # ?
+```
+
+<Why>Undo re-rolls revision 2's template as a new rollout, so it becomes revision 4 and disappears from position 2. See [2.3](#23-rollouts-and-revisions).</Why>
+
+</Quiz>
+
+<Quiz id="q-strategy-blank" type="blank" answer="Recreate">
+
+The new version needs a database migration the old version can't survive, so the two versions must never run at the same time. Fill in the strategy.
+
+```yaml
+spec:
+  strategy:
+    type: ___
+```
+
+<Why>`Recreate` stops all old Pods before starting new ones. You accept downtime in exchange for never running both versions. See [2.4](#24-strategies-rollingupdate-and-recreate).</Why>
+
+</Quiz>
+
+<Quiz id="q-readiness-bug" type="bug" line="11">
+
+This Deployment's rollouts finish within seconds, but users see errors for ~20 seconds after each one. The app listens on port 3000, serves `/readyz` (503 while starting) and `/healthz`, and takes ~20 s to start. Click the line that causes it.
+
+```yaml
+spec:
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/acme/api:2.4.1
+          ports:
+            - containerPort: 3000
+          livenessProbe:
+            httpGet:
+              port: 3000
+              path: /readyz
+```
+
+<Why>It's a **liveness** probe, so nothing gates readiness: each new Pod is Ready the moment it starts, the rollout races ahead, and traffic hits Pods that can't serve yet. It should be a `readinessProbe` on `/readyz` (with liveness on `/healthz`). It's lucky the app starts just inside liveness's default budget (3 failures × 10 s); a little slower and the kubelet would restart it in a loop. See [2.6](#26-readiness-probes-what-makes-a-rollout-safe).</Why>
+
+</Quiz>
+
+<Quiz id="q-stall-why" type="mcq" answer="b">
+
+You roll a 6-replica Deployment to an image tag that doesn't exist. What happens?
+
+<Choice id="a">All 6 Pods are replaced and the app goes down until you fix the tag</Choice>
+<Choice id="b">A few new Pods fail to pull, the rollout stalls, and most old Pods keep serving</Choice>
+<Choice id="c">Kubernetes rolls back to the previous revision automatically after the pull fails</Choice>
+<Choice id="d">The API server rejects the change because the image doesn't exist</Choice>
+
+<Why>New Pods never become ready, so the controller won't take more old Pods away. After `progressDeadlineSeconds` it reports `ProgressDeadlineExceeded`, but it never rolls back on its own. See [2.5](#25-when-a-rollout-goes-wrong).</Why>
+
+</Quiz>
+
+<Quiz id="q-liveness-db" type="mcq" answer="d">
+
+A teammate makes the liveness probe check that the database is reachable. What's the risk?
+
+<Choice id="a">None; it's good to restart Pods that can't reach the database</Choice>
+<Choice id="b">Liveness probes can't make network calls</Choice>
+<Choice id="c">The rollout will take longer</Choice>
+<Choice id="d">A short database outage makes every Pod fail liveness and restart at once, turning a blip into a full outage</Choice>
+
+<Why>Failing liveness restarts the container, which doesn't fix the database. Liveness should check only the process; dependency checks belong (carefully) in readiness. See [2.6](#26-readiness-probes-what-makes-a-rollout-safe).</Why>
+
+</Quiz>
+
+<Quiz id="q-termination-order" type="order" answer="terminating,prestop,sigterm,grace,sigkill">
+
+Order what happens to a container when its Pod is deleted during a rollout.
+
+<Step id="terminating">Pod marked Terminating; removal from Service endpoints starts in parallel</Step>
+<Step id="prestop">The `preStop` hook runs</Step>
+<Step id="sigterm">SIGTERM is sent to PID 1</Step>
+<Step id="grace">The kubelet waits up to the rest of `terminationGracePeriodSeconds`</Step>
+<Step id="sigkill">SIGKILL if the container is still running</Step>
+
+<Why>preStop runs before SIGTERM, and both count against the grace period (default 30 s). See [2.7](#27-graceful-shutdown-during-a-rollout).</Why>
+
+</Quiz>
+
+<Quiz id="q-set-image-drift" type="explain">
+
+During an incident you run `kubectl set image deployment/api api=ghcr.io/acme/api:2.4.2` and it fixes the problem. Two days later a colleague changes an env var in `api-deployment.yaml` (which still says `2.4.1`) and runs `kubectl apply -f`. What happens, and what should have happened after the incident?
+
+<Model>
+
+The apply sets the image back to 2.4.1, because the file is the desired state and it still says 2.4.1. The env var change and the image change roll out together, silently reintroducing the bug that 2.4.2 fixed. After the incident, the fix should have been committed to the file (image 2.4.2 and an updated change-cause) so git matches the cluster; `kubectl diff -f api-deployment.yaml` would have shown the drift.
+
+</Model>
+
+</Quiz>
+
+---
+
+## 5. Checkpoint
+
+Answer these out loud, without notes. If you get stuck on one, re-read that section.
+
+<Checkpoint>
+<Ask id="cp-chain" q="Explain the Deployment → ReplicaSet → Pod chain. Who creates what, how are they named, and what is pod-template-hash for?" section="21-the-hierarchy-deployment--replicaset--pod">
+
+You write the Deployment. Its controller creates one ReplicaSet per Pod-template version, named deployment-name plus pod-template-hash; the ReplicaSet controller creates the Pods, named RS name plus a random suffix. The hash is added as a label to the ReplicaSet selector and its Pods so old and new ReplicaSets of the same Deployment don't adopt each other's Pods. Owner references let deletion cascade.
+
+</Ask>
+<Ask id="cp-rollout-trigger" q="What triggers a rollout? What is a revision, and how does rollout undo work, including the renumbering?" section="23-rollouts-and-revisions">
+
+Only changes to spec.template. Each rollout creates or reuses a ReplicaSet, and each ReplicaSet is a revision; old ones are kept at 0 replicas up to revisionHistoryLimit (default 10). Undo copies an earlier revision's template back into the Deployment, which is a new rollout: that ReplicaSet scales back up and becomes the newest revision number, so the old number disappears from history.
+
+</Ask>
+<Ask id="cp-strategies" q="Compare RollingUpdate and Recreate. Explain maxSurge and maxUnavailable with a worked example." section="24-strategies-rollingupdate-and-recreate">
+
+Recreate stops all old Pods before starting new ones: downtime, used only when two versions can't coexist. RollingUpdate replaces Pods in steps: maxSurge is how many extra Pods may exist above replicas (percent rounds up), maxUnavailable how many may be missing below replicas (percent rounds down). 10 replicas at 25%/25%: up to 13 Pods, at least 8 available. maxSurge 1 / maxUnavailable 0 adds one ready Pod before removing an old one.
+
+</Ask>
+<Ask id="cp-stall" q="You deploy a broken image. Walk through exactly what the Deployment does, how you'd detect it, and how you recover." section="25-when-a-rollout-goes-wrong">
+
+The new ReplicaSet scales up within the surge limit and the old one down within the unavailable limit; the new Pods never become ready (ImagePullBackOff or CrashLoopBackOff), so the rollout stalls with most old Pods still serving. rollout status hangs; after progressDeadlineSeconds (600 by default) the Progressing condition goes False with ProgressDeadlineExceeded. Diagnose with get deploy/rs/pods and describe pod. Recover with rollout undo, then fix the file. Kubernetes never rolls back by itself.
+
+</Ask>
+<Ask id="cp-readiness" q="Why is a rolling update without a readiness probe not really zero-downtime? What do readiness, liveness and minReadySeconds each do?" section="26-readiness-probes-what-makes-a-rollout-safe">
+
+Without a probe a Pod is Ready as soon as its containers start, so the rollout removes old Pods while new ones can't serve yet, and the Service sends them traffic. Readiness gates the rollout and Service endpoints: NotReady Pods get no traffic but keep running. Liveness restarts a wedged container and must not check dependencies. minReadySeconds requires a Pod to stay Ready for a while before it counts as available.
+
+</Ask>
+<Ask id="cp-termination" q="What happens when a Pod is terminated during a rollout, and why add a preStop sleep?" section="27-graceful-shutdown-during-a-rollout">
+
+The Pod is marked Terminating; endpoint removal and container shutdown start in parallel. preStop runs, then SIGTERM, then SIGKILL after terminationGracePeriodSeconds (default 30, including preStop). Because routing updates lag, a Pod that stops accepting immediately on SIGTERM can still receive new requests briefly; a few seconds of preStop sleep lets routing catch up, then the app drains in-flight requests and exits.
+
+</Ask>
+<Ask id="cp-drift" q="apply versus set image versus edit: which do you use, and what is file drift?" section="28-changing-a-deployment-apply-set-image-edit-pause">
+
+Edit the file and kubectl apply -f is the default, because the file in git is the desired state. set image and edit change only the live object, so the file drifts and the next apply silently reverts the change. Use them only for exploring or emergencies, then update and commit the file; same after rollout undo. kubectl diff -f shows drift.
+
+</Ask>
+<Ask id="cp-pause" q="What do rollout pause and resume do, and when would you use them?" section="28-changing-a-deployment-apply-set-image-edit-pause">
+
+Pause makes template changes accumulate without rolling out; resume rolls them all out as one rollout and one revision. Useful when making several imperative changes. You can't undo while paused. Declaratively, you get the same result by making all the changes in the file and applying once.
+
+</Ask>
+<Ask id="cp-bluegreen-canary" q="How would you do blue/green and a canary release with plain Deployments and Services?" section="29-beyond-rolling-updates-bluegreen-and-canary">
+
+Blue/green: run the new version as a second Deployment, test it, then switch the Service selector from the old version label to the new one in one change; rollback is switching back; costs double capacity. Canary: a small Deployment of the new version whose Pods also match the Service selector, so it gets traffic proportional to its Pod count; watch metrics, then promote or remove it. Argo Rollouts or Flagger automate both.
+
+</Ask>
+</Checkpoint>
+
+---
+
+## 6. Resources
+
+<Resource href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/" type="docs" time="45m" required>Kubernetes docs: Deployments (read the whole page, especially "Rolling Back", "Proportional scaling" and "Failed Deployment")</Resource>
+<Resource href="https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/" type="docs" time="30m" required>Kubernetes docs: Configure Liveness, Readiness and Startup Probes</Resource>
+<Resource href="https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination" type="docs" time="15m">Kubernetes docs: Pod lifecycle, termination of Pods</Resource>
+<Resource href="https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/" type="docs" time="10m">kubectl reference: rollout (status, history, undo, pause, resume, restart)</Resource>
+<Resource href="https://learnk8s.io/graceful-shutdown" type="article" time="30m">learnk8s: Graceful shutdown and zero downtime deployments in Kubernetes</Resource>
