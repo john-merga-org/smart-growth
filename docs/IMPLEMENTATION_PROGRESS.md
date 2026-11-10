@@ -102,3 +102,7 @@ A running log of building the platform described in [PLATFORM_DESIGN.md](PLATFOR
 - `course.yaml`: the full roadmap (14 modules, 3 milestones). Topics added beyond the videos: namespaces/ConfigMaps/Secrets, probes and resources, storage, Ingress and Helm. `overview.mdx` has a table of what the course changes from the videos and why (control plane terms, containerd, kind instead of minikube, `apply -f`, change-cause instead of `--record`, readiness probes).
 - Phase 1 written: Modules 01–05. 01 was written first as the template; 02–05 were written by parallel agents from it and then reviewed. Consistency fixes after review: cluster/node names (`lab-*`), the image name (`hello-k8s`), and `/` returning 503 during startup so the Module 05 load test is realistic.
 - `content:check` passes for all files, all external links return 200, and every page renders on a local dev server (scratch PGlite).
+
+### 2026-11-10
+- The Vercel deploy stopped loading. Running `next build` locally failed with `SecurityFatalError`: `next@16.4.0` is affected by critical advisories (GHSA-2464-fhr4-w9xw and GHSA-673q-mjm6-r5xr, both RCE, plus GHSA-p3m5-59mp-jv5r, a DoS), so the build exits 1. The Oct 31 push most likely failed on Vercel the same way.
+- Upgraded to `next@16.4.6`. The build passes, `tsc` is clean, all 26 tests pass, and `npm audit` no longer flags `next`. 6 moderate advisories remain via `postcss-selector-parser` (from `@tailwindcss/typography`); `npm audit fix --force` would downgrade typography, so they're left for now.
